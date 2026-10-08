@@ -1,0 +1,43 @@
+services:
+  network-graph:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      EXPERIMENT_SOURCE: mock       # "neo4j" is reserved for when the experiment schema is wired up
+      SEED_DEMO_LISTS: "1"          # demo lists sampled from the embeddings; set 0 once real lists come from the API
+      EDGES_PER_NODE: "3"
+    volumes:
+      # <species>-embeddings.npy / <species>-gene-ids.npy
+      - ${EMBEDDINGS_HOST_DIR:-${HOME}/Work/plantgenie-api/pg-data/embeddings}:/data/embeddings:ro
+      - network_graph_data:/data/app
+    networks:
+      - plantgenie_network
+
+  # Not used yet (experiments are mocked) – start with: docker compose --profile neo4j up
+  neo4j:
+    profiles: ["neo4j"]
+    image: neo4j:2026.01.4-community-trixie
+    ports:
+      - "7474:7474"
+      - "7687:7687"
+    environment:
+      NEO4J_AUTH: neo4j/guest123
+      NEO4J_PLUGINS: '["graph-data-science"]'
+    volumes:
+      - /home/seva/plantgenie-neo4j/data:/data
+      - /home/seva/plantgenie-neo4j:/import:ro
+    healthcheck:
+      test: ["CMD-SHELL", "cypher-shell -u neo4j -p guest123 'RETURN 1' || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 60s
+    networks:
+      - plantgenie_network
+
+volumes:
+  network_graph_data:
+
+networks:
+  plantgenie_network:
