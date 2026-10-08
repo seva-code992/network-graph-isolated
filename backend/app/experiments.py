@@ -11,17 +11,17 @@ from typing import Protocol
 
 import numpy as np
 
-from .similarity import knn_edges, prune_topk
+from .similarity import TooManyEdges, pair_edges
 
 
 class ExperimentSource(Protocol):
     def list_experiments(self) -> list[dict]: ...
 
     def expression_edges(
-        self, experiment_ids: list[str], genes: list[tuple[str, str]], k: int
+        self, experiment_ids: list[str], genes: list[tuple[str, str]], limit: int | None = None
     ) -> dict[tuple[str, str], float]:
         """genes = [(gene_id, species)]. Returns {(gene_a, gene_b): score in (0, 1]} for
-        same-species pairs, taking the best score across the selected experiments."""
+        every same-species pair with a score, taking the best score across the selected experiments."""
         ...
 
 
@@ -44,7 +44,7 @@ class MockExperimentSource:
         ]).astype(np.float32)
         return X / np.linalg.norm(X, axis=1, keepdims=True)
 
-    def expression_edges(self, experiment_ids, genes, k):
+    def expression_edges(self, experiment_ids, genes, limit=None):
         known = {e["id"] for e in self.list_experiments()}
         out: dict[tuple[str, str], float] = {}
         if not genes:
@@ -55,11 +55,13 @@ class MockExperimentSource:
         for exp in experiment_ids:
             if exp not in known:
                 raise KeyError(exp)
-            pairs = knn_edges(self._vectors(exp, ids), labels, k, same_label=True)
+            pairs = pair_edges(self._vectors(exp, ids), labels, same_label=True, limit=limit)
             for (i, j), s in pairs.items():
                 key = (ids[i], ids[j])
                 out[key] = max(out.get(key, 0.0), round(s, 4))
-        return prune_topk(out, k) if len(experiment_ids) > 1 else out
+        if limit is not None and len(out) > limit:
+            raise TooManyEdges(f"The selection produces more than {limit} edges. Select fewer genes.")
+        return out
 
 
 def make_source(kind: str) -> ExperimentSource:

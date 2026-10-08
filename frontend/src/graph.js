@@ -1,7 +1,7 @@
 import * as d3 from 'd3';
-import { edgeWidth, idOf, nodeVisible } from './logic.js';
+import { edgeWidth, idOf, nodeColor as colorOf, nodeVisible } from './logic.js';
 
-const R = 10;
+const R = 12.5; // nodes are 25px, edges at most 0.5px (Figma)
 const MIN_K = 0.125, MAX_K = 8;
 
 /**
@@ -16,7 +16,7 @@ export function createGraph(host, { tooltip, listName, onZoom, onBackgroundClick
   const nodeLayer = viewport.append('g').attr('class', 'nodes');
 
   let nodes = [], edges = [], sim = null, edgeSel, hitSel, nodeSel;
-  let colors = { nodes: {}, edges: {} };
+  let colors = { nodes: {}, edges: {}, shared: null };
   let threshold = 0, hidden = new Set(), highlightId = null;
   let userMoved = false, width = 800, height = 400;
 
@@ -52,7 +52,7 @@ export function createGraph(host, { tooltip, listName, onZoom, onBackgroundClick
   const hideTip = () => { tooltip.hidden = true; };
   const el = (tag, cls, text) => Object.assign(document.createElement(tag), { className: cls, textContent: text });
 
-  const nodeColor = (n) => colors.nodes[n.lists[0]] || '#999';
+  const nodeColor = (n) => colorOf(n, colors);
   const edgeColor = (d) => colors.edges[d.type] || '#000';
 
   // ----- data -----
@@ -68,15 +68,18 @@ export function createGraph(host, { tooltip, listName, onZoom, onBackgroundClick
 
     // spread the start so the simulation doesn't begin from a single point
     nodes.forEach((n, i) => {
-      const a = i * 2.399963, r = 14 * Math.sqrt(i + 1);
+      const a = i * 2.399963, r = 22 * Math.sqrt(i + 1);
       n.x = width / 2 + r * Math.cos(a); n.y = height / 2 + r * Math.sin(a);
     });
+    const deg = new Map();
+    for (const e of edges) for (const id of [e.source, e.target]) deg.set(id, (deg.get(id) || 0) + 1);
     sim = d3.forceSimulation(nodes)
-      // stronger / shorter links for higher scores -> well-connected genes cluster slightly
-      .force('link', d3.forceLink(edges).id((d) => d.id).distance((d) => 120 - 70 * d.score)
-        .strength((d) => 0.1 + 0.5 * d.score))
-      .force('charge', d3.forceManyBody().strength(-110).distanceMax(400))
-      .force('collide', d3.forceCollide(R + 3))
+      // every edge pulls, stronger / shorter for higher scores -> well-connected genes cluster slightly.
+      // Strength is divided by the smaller degree so dense graphs do not collapse into a point.
+      .force('link', d3.forceLink(edges).id((d) => d.id).distance((d) => 140 - 70 * d.score)
+        .strength((d) => (0.15 + 0.85 * d.score) / Math.min(deg.get(d.source.id ?? d.source), deg.get(d.target.id ?? d.target)) ** 0.8))
+      .force('charge', d3.forceManyBody().strength(-220).distanceMax(500))
+      .force('collide', d3.forceCollide(R + 4))
       .force('x', d3.forceX(width / 2).strength(0.04))
       .force('y', d3.forceY(height / 2).strength(0.06))
       .stop();

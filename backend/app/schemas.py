@@ -26,7 +26,9 @@ class ListSelection(BaseModel):
     gene_ids: list[str] | None = None
 
 
-class GraphIn(BaseModel):
+class SharedIn(BaseModel):
     lists: list[ListSelection] = Field(min_length=1, max_length=12)
+
+
+class GraphIn(SharedIn):
     experiment_ids: list[str] = Field(default_factory=list, max_length=50)
-    edges_per_node: int | None = Field(default=None, ge=1, le=10)

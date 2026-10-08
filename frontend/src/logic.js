@@ -1,11 +1,12 @@
 // Pure graph logic (no DOM) – unit tested in test/logic.test.js.
 
-// Four line-thickness classes shown in the legend; width in px.
+// Four line-thickness classes shown in the legend; width in px (the Figma values:
+// 0.5px = similarity 1, 0.1px = the thinnest line).
 export const BINS = [
-  { min: 0, max: 0.25, width: 1 },
-  { min: 0.25, max: 0.5, width: 1.5 },
-  { min: 0.5, max: 0.75, width: 2.25 },
-  { min: 0.75, max: 1, width: 3.5 },
+  { min: 0, max: 0.25, width: 0.1 },
+  { min: 0.25, max: 0.5, width: 0.18 },
+  { min: 0.5, max: 0.75, width: 0.35 },
+  { min: 0.75, max: 1, width: 0.5 },
 ];
 
 export function binOf(score) {
@@ -86,3 +87,38 @@ export function gradientColor(stops, t) {
   }
   return stops.at(-1).color;
 }
+
+// ---------- colours ----------
+export const hexToRgb = (c) => [1, 3, 5].map((i) => parseInt(c.slice(i, i + 2), 16));
+export const rgbToHex = (rgb) => '#' + rgb.map((v) => Math.round(v).toString(16).padStart(2, '0')).join('');
+export const mixColors = (cols) => rgbToHex([0, 1, 2].map((k) => cols.reduce((a, c) => a + hexToRgb(c)[k], 0) / cols.length));
+export const colorDistance = (a, b) => Math.hypot(...hexToRgb(a).map((v, k) => v - hexToRgb(b)[k]));
+
+/**
+ * Colour of a gene. colors = { nodes: {listId: hex}, edges, shared: {mode, custom} }.
+ * Genes in more than one list are "shared": mode 'first' -> colour of their first list,
+ * 'mixed' -> average of their lists' colours, 'custom' -> user colour (one for all, or per gene).
+ */
+export function nodeColor(node, colors) {
+  const base = node.lists.map((l) => colors.nodes[l] || '#999999');
+  if (node.lists.length < 2 || !colors.shared) return base[0];
+  const { mode, custom } = colors.shared;
+  if (mode === 'mixed') return mixColors(base);
+  if (mode === 'custom') {
+    const c = custom.grouping === 'individual' ? custom.genes[node.id] ?? custom.all : custom.all;
+    if (c) return c;
+  }
+  return base[0];
+}
+
+/** Colours that may not be given to `target` ('shared' | 'nodes' | 'edges'): lists and shared genes never share one. */
+export function reservedColors(target, colors) {
+  if (target === 'shared') return Object.values(colors.nodes);
+  if (target === 'nodes' && colors.shared?.mode === 'custom') {
+    const { grouping, all, genes } = colors.shared.custom;
+    return (grouping === 'individual' ? [...Object.values(genes), all] : [all]).filter(Boolean);
+  }
+  return [];
+}
+/** Tolerance so that near-identical colours (e.g. from the free colour picker) count as the same. */
+export const isReserved = (hex, reserved) => reserved.some((r) => colorDistance(hex, r) < 12);

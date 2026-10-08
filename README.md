@@ -39,9 +39,14 @@ Endpoints: `GET /api/species|experiments|lists|lists/{id}`, `POST /api/lists/par
 ## Behaviour notes
 
 * Annotation (black) edges: cosine similarity of embeddings, **different species only**. Expression (blue): **same species only**.
-* To keep edges proportional to nodes, each gene keeps its top `EDGES_PER_NODE` (default 3) partners per edge type.
-  Line thickness has four classes (0–.25, .25–.5, .5–.75, .75–1). The score filter keeps edges with score **greater than** the value.
+* Every possible edge is returned (all cross-species pairs / all same-species pairs with a score > 0).
+  `MAX_EDGES` (default 100000) refuses selections that would produce more, with a clear message.
+* Nodes are 25px; edge widths follow the Figma: four classes (0–.25, .25–.5, .5–.75, .75–1) of 0.1 / 0.18 / 0.35 / 0.5px
+  (`BINS` in `frontend/src/logic.js`). Strokes scale with zoom. The score filter keeps edges with score **greater than** the value.
 * Gene statistics are computed on the edges currently visible (after score filter and hidden lists).
-* A gene present in several lists takes the colour of the first one and is hidden only when all its lists are hidden.
+* Shared genes (selected in more than one list): `POST /api/graph/shared-genes` detects them and an information box asks
+  how to colour them – colour of the first list, mixed colour of their lists, or custom (one colour for all, or one per gene).
+  Lists and shared genes can never use the same colour; those colours are disabled in the customize box.
+  A shared gene is hidden only when all its lists are hidden.
 * Graph interaction: Ctrl+scroll / pinch zooms, drag pans, dragging a gene pins it, double-click unpins.
 * Import `.tsv`: exactly two tab-separated columns (gene ID, description); optional header row; duplicates ignored; max 5 MB.

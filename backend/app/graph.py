@@ -1,15 +1,15 @@
-"""Assemble the network graph (nodes + annotation edges + expression edges) for a selection."""
+"""Assemble the network graph (nodes + all annotation edges + all expression edges) for a selection."""
 from __future__ import annotations
 
 import numpy as np
 
 from .embeddings import EmbeddingStore
 from .experiments import ExperimentSource
-from .similarity import knn_edges
+from .similarity import TooManyEdges, pair_edges
 
 
 def build_graph(selection: list[tuple[dict, list[dict]]], store: EmbeddingStore,
-                experiments: ExperimentSource, experiment_ids: list[str], k: int) -> dict:
+                experiments: ExperimentSource, experiment_ids: list[str], max_edges: int) -> dict:
     """selection = [(list, selected genes)] in the order the user picked them."""
     nodes: dict[str, dict] = {}
     lists_out = []
@@ -45,7 +45,7 @@ def build_graph(selection: list[tuple[dict, list[dict]]], store: EmbeddingStore,
     edges = []
     if len(dims) == 1 and len(species_codes) > 1:
         X = np.vstack(vectors)
-        for (i, j), s in knn_edges(X, np.array(labels), k, same_label=False).items():
+        for (i, j), s in pair_edges(X, np.array(labels), same_label=False, limit=max_edges).items():
             edges.append({"source": owners[i], "target": owners[j], "type": "annotation",
                           "score": round(s, 4)})
     elif len(dims) > 1:
@@ -54,8 +54,21 @@ def build_graph(selection: list[tuple[dict, list[dict]]], store: EmbeddingStore,
     # --- expression edges: same species only, from the selected experiments ---
     if experiment_ids:
         pairs = experiments.expression_edges(
-            experiment_ids, [(n["id"], n["species"]) for n in nodes.values()], k)
+            experiment_ids, [(n["id"], n["species"]) for n in nodes.values()], max_edges)
         edges += [{"source": a, "target": b, "type": "expression", "score": s}
                   for (a, b), s in pairs.items()]
 
+    if len(edges) > max_edges:
+        raise TooManyEdges(f"The selection produces {len(edges)} edges (limit {max_edges}). Select fewer genes.")
     return {"lists": lists_out, "nodes": list(nodes.values()), "edges": edges, "missing": missing}
+
+
+def shared_genes(selection: list[tuple[dict, list[dict]]]) -> list[dict]:
+    """Genes that occur (among the selected genes) in more than one of the selected lists."""
+    seen: dict[str, list[dict]] = {}
+    for lst, genes in selection:
+        for g in genes:
+            owners = seen.setdefault(g["id"], [])
+            if all(o["id"] != lst["id"] for o in owners):
+                owners.append({"id": lst["id"], "name": lst["name"]})
+    return [{"id": gid, "lists": owners} for gid, owners in seen.items() if len(owners) > 1]

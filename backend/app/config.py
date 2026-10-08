@@ -18,8 +18,8 @@ class Settings:
     experiment_source: str = "mock"
     # Seed demo gene lists (sampled from the embedding gene-id files) on first start
     seed_demo_lists: bool = True
-    # How many edges of each type every gene may keep (keeps edges ~ proportional to nodes)
-    edges_per_node: int = 3
+    # Safety cap on the number of edges one graph may contain (every possible edge is returned)
+    max_edges: int = 100_000
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -30,5 +30,5 @@ class Settings:
             frontend_dist=Path(e.get("FRONTEND_DIST", cls.frontend_dist)),
             experiment_source=e.get("EXPERIMENT_SOURCE", cls.experiment_source),
             seed_demo_lists=e.get("SEED_DEMO_LISTS", "1") not in ("0", "false", "False"),
-            edges_per_node=int(e.get("EDGES_PER_NODE", cls.edges_per_node)),
+            max_edges=int(e.get("MAX_EDGES", cls.max_edges)),
         )

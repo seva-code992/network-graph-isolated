@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { binOf, edgeWidth, visibleEdges, geneStats, rank, matrixTsv, gradientColor } from '../src/logic.js';
+import { binOf, edgeWidth, visibleEdges, geneStats, rank, matrixTsv, gradientColor, BINS,
+  nodeColor, mixColors, reservedColors, isReserved } from '../src/logic.js';
+import { buildColorModes, defaultShared } from '../src/colorModes.js';
 import { randomNodeColors, PALETTES } from '../src/palettes.js';
 
 const nodes = [
@@ -65,4 +67,53 @@ test('random node colours come from the default palette without repeats', () => 
   const c = randomNodeColors(['a', 'b', 'c']);
   assert.equal(new Set(Object.values(c)).size, 3);
   assert.ok(Object.values(c).every((x) => PALETTES[0].colors.includes(x)));
+});
+
+test('line widths follow the Figma values: 0.5px for score 1, 0.1px thinnest', () => {
+  assert.deepEqual(BINS.map((b) => b.width), [0.1, 0.18, 0.35, 0.5]);
+  assert.equal(edgeWidth(1), 0.5); assert.equal(edgeWidth(0.1), 0.1);
+});
+
+const colors = () => ({ nodes: { L1: '#ff0000', L2: '#0000ff', L3: '#00ff00' }, edges: {}, shared: defaultShared() });
+const shared = { id: 'g', lists: ['L1', 'L2'] };
+
+test('shared gene colour: first list / mixed / custom (all or individually)', () => {
+  const c = colors();
+  assert.equal(nodeColor({ id: 'x', lists: ['L2'] }, c), '#0000ff');   // not shared: own list
+  assert.equal(nodeColor(shared, c), '#ff0000');                         // first
+  c.shared.mode = 'mixed';
+  assert.equal(nodeColor(shared, c), mixColors(['#ff0000', '#0000ff']));
+  c.shared.mode = 'custom'; c.shared.custom.all = '#123456';
+  assert.equal(nodeColor(shared, c), '#123456');
+  c.shared.custom.grouping = 'individual'; c.shared.custom.genes.g = '#abcdef';
+  assert.equal(nodeColor(shared, c), '#abcdef');
+  assert.equal(nodeColor({ id: 'h', lists: ['L1', 'L3'] }, c), '#123456'); // falls back to the "all" colour
+});
+
+test('mixed colour is the RGB average', () => {
+  assert.equal(mixColors(['#ff0000', '#0000ff']), '#800080');
+});
+
+test('lists and shared genes cannot use the same colour (both directions, with tolerance)', () => {
+  const c = colors();
+  const m = buildColorModes({ colors: c, lists: [{ id: 'L1' }, { id: 'L2' }], sharedGenes: [shared] });
+  assert.equal(m.isBlocked('shared-all', '#ff0000'), true);
+  assert.equal(m.isBlocked('shared-individual', '#fe0202'), true);   // visually identical
+  assert.equal(m.isBlocked('shared-all', '#123456'), false);
+  assert.equal(m.isBlocked('edges', '#ff0000'), false);
+  assert.equal(m.isBlocked('nodes', '#123456'), false);              // shared not custom yet
+  m.getItems('shared-all')[0].set('#123456');                         // choosing a colour switches to custom
+  assert.equal(c.shared.mode, 'custom');
+  assert.equal(m.isBlocked('nodes', '#123456'), true);               // now unavailable to the lists
+  assert.ok(isReserved('#123456', reservedColors('nodes', c)));
+});
+
+test('customize modes: shared entries only when shared genes exist', () => {
+  const c = colors();
+  const none = buildColorModes({ colors: c, lists: [], sharedGenes: [] }).getModes().map((x) => x.id);
+  assert.deepEqual(none, ['nodes', 'edges']);
+  const some = buildColorModes({ colors: c, lists: [], sharedGenes: [shared] }).getModes().map((x) => x.id);
+  assert.deepEqual(some, ['nodes', 'edges', 'shared-all', 'shared-individual']);
+  const items = buildColorModes({ colors: c, lists: [], sharedGenes: [shared, { id: 'k', lists: ['L1', 'L3'] }] }).getItems('shared-individual');
+  assert.deepEqual(items.map((i) => i.label), ['g', 'k']);
 });

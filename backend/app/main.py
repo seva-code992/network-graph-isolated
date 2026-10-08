@@ -10,9 +10,9 @@ from . import tsv
 from .config import Settings
 from .embeddings import EmbeddingStore
 from .experiments import make_source
-from .graph import build_graph
+from .graph import build_graph, shared_genes
 from .lists import FileListsProvider, summary
-from .schemas import GraphIn, ListIn, TsvIn
+from .schemas import GraphIn, ListIn, SharedIn, TsvIn
 from .species import SPECIES
 
 
@@ -22,6 +22,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     lists = FileListsProvider(settings.data_dir / "lists.json", store, settings.seed_demo_lists)
     experiments = make_source(settings.experiment_source)
     app = FastAPI(title="Network graph API")
+    app.state.store = store
 
     @app.get("/api/health")
     def health():
@@ -68,10 +69,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                                 [g.model_dump() for g in body.genes])
         return summary(saved)
 
-    @app.post("/api/graph")
-    def graph(body: GraphIn):
+    def resolve(sel_in) -> list[tuple[dict, list[dict]]]:
         selection = []
-        for sel in body.lists:
+        for sel in sel_in:
             lst = lists.get_list(sel.id)
             if lst is None:
                 raise HTTPException(404, f"List {sel.id!r} not found")
@@ -83,12 +83,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 selection.append((lst, genes))
         if not selection:
             raise HTTPException(422, "No genes selected")
+        return selection
+
+    @app.post("/api/graph/shared-genes")
+    def graph_shared_genes(body: SharedIn):
+        return {"genes": shared_genes(resolve(body.lists))}
+
+    @app.post("/api/graph")
+    def graph(body: GraphIn):
+        selection = resolve(body.lists)
         try:
-            return build_graph(selection, store, experiments, body.experiment_ids,
-                               body.edges_per_node or settings.edges_per_node)
+            return build_graph(selection, store, experiments, body.experiment_ids, settings.max_edges)
         except KeyError as e:
             raise HTTPException(422, f"Unknown experiment {e.args[0]!r}") from e
-        except ValueError as e:
+        except ValueError as e:  # includes TooManyEdges
             raise HTTPException(422, str(e)) from e
 
     dist = Path(settings.frontend_dist)

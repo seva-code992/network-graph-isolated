@@ -6,7 +6,7 @@ services:
     environment:
       EXPERIMENT_SOURCE: mock       # "neo4j" is reserved for when the experiment schema is wired up
       SEED_DEMO_LISTS: "1"          # demo lists sampled from the embeddings; set 0 once real lists come from the API
-      EDGES_PER_NODE: "3"
+      MAX_EDGES: "100000"           # safety cap: every possible edge is returned, so huge selections are refused
     volumes:
       # <species>-embeddings.npy / <species>-gene-ids.npy
       - ${EMBEDDINGS_HOST_DIR:-${HOME}/Work/plantgenie-api/pg-data/embeddings}:/data/embeddings:ro

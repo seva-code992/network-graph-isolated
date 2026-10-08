@@ -3,16 +3,16 @@ import { createGraph, ZOOM_RANGE } from './graph.js';
 import { createStats } from './stats.js';
 import { createCustomize } from './customize.js';
 import { BINS, nodeVisible, visibleEdges } from './logic.js';
-import { DEFAULT_EDGE_COLORS, randomNodeColors } from './palettes.js';
+import { buildColorModes } from './colorModes.js';
 import { exportPng, exportSvg, exportTsv } from './export.js';
 
 const fmt = (x) => x.toFixed(2);
 
 /** The network-graph page. selection = [{id, gene_ids?}] coming from the selector. */
-export function createGraphView({ api, selection, sourceName, speciesNames, onChangeSelection, onBack }) {
+export function createGraphView({ api, selection, colors, sourceName, speciesNames, onChangeSelection, onBack }) {
   const st = {
     data: null, loading: true, error: '', experiments: [], expIds: [], threshold: 0,
-    hidden: new Set(), colors: null, seq: 0, showMissing: false, expOpen: false, exportOpen: false,
+    hidden: new Set(), colors, seq: 0, showMissing: false, expOpen: false, exportOpen: false,
   };
   const disposers = [];
   const listName = (id) => st.data?.lists.find((l) => l.id === id)?.name ?? id;
@@ -39,8 +39,12 @@ export function createGraphView({ api, selection, sourceName, speciesNames, onCh
   });
   const stats = createStats({ onSelect: (id) => (id ? graph.highlight(id) : graph.clearHighlight()) });
   const legendEl = h('div', { class: 'legend' });
-  const customize = createCustomize({ getLists: () => st.data?.lists ?? [], getColors: () => st.colors,
-    onChange: (c) => { st.colors = c; graph.setColors(c); renderLegend(); }, ignoreOutside: [customizeBtn] });
+  // lists, shared genes and edges are all customised here; modes are rebuilt from the loaded data
+  const modes = () => buildColorModes({ colors: st.colors, lists: st.data?.lists ?? [],
+    sharedGenes: (st.data?.nodes ?? []).filter((n) => n.lists.length > 1) });
+  const customize = createCustomize({
+    getModes: () => modes().getModes(), getItems: (m) => modes().getItems(m), isBlocked: (m, c) => modes().isBlocked(m, c),
+    onChange: () => { graph.setColors(st.colors); renderLegend(); }, ignoreOutside: [customizeBtn] });
 
   const tagsEl = h('div', { class: 'tags' });
   const expBtn = h('button', { class: 'select-btn', 'aria-haspopup': 'listbox', title: 'Choose one or more expression experiments',
@@ -183,9 +187,6 @@ export function createGraphView({ api, selection, sourceName, speciesNames, onCh
       const data = await api.graph({ lists: selection, experiment_ids: st.expIds });
       if (seq !== st.seq) return; // a newer request superseded this one
       st.data = data;
-      if (!st.colors) {
-        st.colors = { nodes: randomNodeColors(data.lists.map((l) => l.id)), edges: { ...DEFAULT_EDGE_COLORS } };
-      }
       graph.setColors(st.colors);
       graph.setData(data.nodes, data.edges);        // resets the layout, pins and view
       graph.setThreshold(st.threshold);

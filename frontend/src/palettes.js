@@ -21,3 +21,8 @@ export function randomNodeColors(listIds, rng = Math.random) {
   }
   return Object.fromEntries(listIds.map((id, i) => [id, pool[i % pool.length]]));
 }
+
+/** First palette colour that is not in `reserved` (see logic.isReserved). */
+export function freeColor(reserved, isReserved) {
+  return PALETTES.flatMap((p) => p.colors).find((c) => !isReserved(c, reserved)) ?? '#888888';
+}

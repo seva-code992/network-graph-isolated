@@ -30,6 +30,7 @@ export function createApi(base = '') {
     list: (id) => request(`/api/lists/${encodeURIComponent(id)}`),
     parseTsv: (filename, text) => request('/api/lists/parse-tsv', { method: 'POST', body: { filename, text } }),
     createList: (body) => request('/api/lists', { method: 'POST', body }),
+    sharedGenes: (lists) => request('/api/graph/shared-genes', { method: 'POST', body: { lists } }),
     graph: (body) => request('/api/graph', { method: 'POST', body }),
   };
 }
