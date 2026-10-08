@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import { binOf, edgeWidth, visibleEdges, geneStats, rank, matrixTsv, gradientColor, BINS,
   nodeColor, mixColors, reservedColors, isReserved } from '../src/logic.js';
 import { buildColorModes, defaultShared } from '../src/colorModes.js';
+import * as G from '../src/groups.js';
+import { hsvToRgb, rgbToHsv, rgbToHsl, hslToRgb, toHex, parseHex } from '../src/colorPicker.js';
 import { randomNodeColors, PALETTES } from '../src/palettes.js';
 
 const nodes = [
@@ -116,4 +118,63 @@ test('customize modes: shared entries only when shared genes exist', () => {
   assert.deepEqual(some, ['nodes', 'edges', 'shared-all', 'shared-individual']);
   const items = buildColorModes({ colors: c, lists: [], sharedGenes: [shared, { id: 'k', lists: ['L1', 'L3'] }] }).getItems('shared-individual');
   assert.deepEqual(items.map((i) => i.label), ['g', 'k']);
+});
+
+// ---- palette view model ----
+const SW = ['#6DFD9D', '#6DE7FD', '#FDF16D'];
+const itm = (key, color) => ({ key, get: () => color });
+
+test('groups: items already on a swatch share its box, others start in the tray', () => {
+  const g = G.initGroups([itm('a', '#6dfd9d'), itm('b', '#6DFD9D'), itm('c', '#123456')], SW);
+  assert.equal(g.length, 2);
+  assert.deepEqual(g[0].keys, ['a', 'b']); assert.equal(g[0].color, '#6dfd9d');
+  assert.deepEqual(g[1].keys, ['c']); assert.equal(g[1].color, null);
+});
+
+test('groups: dropping boxes on the same colour merges them (same colour for all)', () => {
+  let gs = G.initGroups([itm('a', 'x'), itm('b', 'x'), itm('c', 'x')], SW);
+  const [A, B, C] = gs.map((g) => g.id);
+  let r = G.placeOnColor(gs, A, '#6DE7FD'); gs = r.groups;
+  assert.deepEqual(r.keys, ['a']);
+  r = G.placeOnColor(gs, B, '#6DE7FD'); gs = r.groups;
+  assert.equal(gs.length, 2); assert.deepEqual(gs.find((g) => g.color).keys, ['a', 'b']);
+  r = G.mergeGroups(gs, C, gs.find((g) => g.color).id);                 // box on box
+  assert.equal(r.color, '#6de7fd'); assert.deepEqual(r.keys, ['c']);
+  assert.deepEqual(r.groups[0].keys, ['a', 'b', 'c']);
+});
+
+test('groups: dragging a name out of a merged box gives it its own box in the tray', () => {
+  const gs = G.initGroups([itm('a', '#6DFD9D'), itm('b', '#6DFD9D')], SW);
+  const out = G.detachKey(gs, 'b');
+  assert.deepEqual(out.find((g) => g.color).keys, ['a']);
+  assert.deepEqual(out.find((g) => !g.color).keys, ['b']);
+  const sole = G.detachKey(G.initGroups([itm('a', '#6DFD9D')], SW), 'a');   // a lone box is simply unplaced
+  assert.equal(sole.length, 1); assert.equal(sole[0].color, null);
+  const r = G.placeKeyOnColor(gs, 'b', '#FDF16D');
+  assert.deepEqual(r.keys, ['b']); assert.equal(r.groups.length, 2);
+  const m = G.moveKeyToGroup(gs, 'b', gs[0].id); assert.deepEqual(m.groups[0].keys, ['a', 'b']);
+});
+
+// ---- picker maths ----
+test('colour conversions round-trip', () => {
+  assert.deepEqual(hsvToRgb({ h: 0, s: 1, v: 1 }), [255, 0, 0]);
+  assert.deepEqual(hsvToRgb({ h: 200, s: 0.5, v: 0.5 }), hsvToRgb(rgbToHsv(hsvToRgb({ h: 200, s: 0.5, v: 0.5 }))));
+  for (const rgb of [[109, 231, 253], [0, 0, 0], [255, 255, 255], [18, 52, 86]]) {
+    hslToRgb(rgbToHsl(rgb)).forEach((v, k) => assert.ok(Math.abs(v - rgb[k]) <= 2)); // HSL is shown in whole numbers
+    assert.deepEqual(hsvToRgb(rgbToHsv(rgb)), rgb);
+  }
+  assert.equal(toHex([109, 231, 253]), '#6de7fd');
+  assert.equal(toHex([109, 231, 253], 0.5), '#6de7fd80');
+});
+
+test('hex parsing accepts 3/6/8 digits and rejects junk', () => {
+  assert.deepEqual(parseHex('#6DE7FD'), { rgb: [109, 231, 253], a: 1 });
+  assert.deepEqual(parseHex('fff').rgb, [255, 255, 255]);
+  assert.ok(Math.abs(parseHex('#00000080').a - 0.5) < 0.01);
+  assert.equal(parseHex('#12'), null); assert.equal(parseHex('zzzzzz'), null);
+});
+
+test('colours with opacity still compare by their rgb part', () => {
+  assert.ok(isReserved('#ff000080', ['#ff0000']));
+  assert.equal(mixColors(['#ff000080', '#0000ff']), '#800080');
 });

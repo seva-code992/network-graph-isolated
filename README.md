@@ -48,5 +48,8 @@ Endpoints: `GET /api/species|experiments|lists|lists/{id}`, `POST /api/lists/par
   how to colour them – colour of the first list, mixed colour of their lists, or custom (one colour for all, or one per gene).
   Lists and shared genes can never use the same colour; those colours are disabled in the customize box.
   A shared gene is hidden only when all its lists are hidden.
+* Customize box (`frontend/src/customize.js`): home screen → palette screen (drag boxes onto colours; boxes dropped on each
+  other share a colour; drag a name out of a box to separate it) or colour-picker screen (select a name, pick a colour; hex / RGB / HSL,
+  opacity, eye-dropper where the browser supports it). Colours may carry opacity (`#rrggbbaa`).
 * Graph interaction: Ctrl+scroll / pinch zooms, drag pans, dragging a gene pins it, double-click unpins.
 * Import `.tsv`: exactly two tab-separated columns (gene ID, description); optional header row; duplicates ignored; max 5 MB.
