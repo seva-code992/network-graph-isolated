@@ -7,7 +7,8 @@ vanilla-JS/d3 frontend, shipped as one Docker image.
 
 ```bash
 # real data: <species>-embeddings.npy / <species>-gene-ids.npy (arabidopsis, pruav, pinsy, picab, potra, betpe)
-EMBEDDINGS_HOST_DIR=~/Work/plantgenie-api/pg-data/embeddings docker compose up --build
+cp .env.example .env     # then edit EMBEDDINGS_HOST_DIR (absolute path; "~" is not expanded)
+docker compose up --build
 # → http://localhost:8000   (a dev harness list page; open "Network graph")
 ```
 
