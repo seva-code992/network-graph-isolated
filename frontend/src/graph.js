@@ -1,45 +1,110 @@
 import * as d3 from 'd3';
-import { edgeWidth, idOf, nodeColor as colorOf, nodeVisible } from './logic.js';
+import { BINS, binOf, idOf, nodeColor as colorOf, nodeVisible } from './logic.js';
 
 const R = 12.5; // nodes are 25px, edges at most 0.5px (Figma)
 const MIN_K = 0.125, MAX_K = 8;
+const LAYOUT_LINKS_PER_NODE = 8;   // the force layout only uses each gene's strongest edges
+const MOVING_EDGE_BUDGET = 15000;  // while moving, large graphs draw a sample of the edges
 
 /**
- * d3 force-directed network rendered as SVG.
- * Fill/stroke are set as attributes (not CSS) so the SVG can be exported as-is.
+ * Force-directed network. Genes are SVG circles (interactive, exportable); the edges – tens of
+ * thousands when every pair is connected – are painted on a canvas underneath, batched by colour and
+ * width, so panning / zooming / dragging stays smooth.
  */
 export function createGraph(host, { tooltip, listName, onZoom, onBackgroundClick }) {
+  const canvas = d3.select(host).append('canvas').attr('class', 'graph-canvas').node();
+  const ctx = canvas.getContext('2d');
   const svg = d3.select(host).append('svg').attr('class', 'graph-svg').attr('role', 'img')
     .attr('aria-label', 'Gene network graph').style('touch-action', 'none');
   const viewport = svg.append('g').attr('class', 'viewport');
-  const edgeLayer = viewport.append('g').attr('class', 'edges');
   const nodeLayer = viewport.append('g').attr('class', 'nodes');
 
-  let nodes = [], edges = [], sim = null, edgeSel, hitSel, nodeSel;
+  let nodes = [], edges = [], sim = null, nodeSel;
+  let E = { src: new Int32Array(0), tgt: new Int32Array(0), score: new Float32Array(0), type: new Uint8Array(0) };
+  let groups = [], visibleCount = 0;                 // visible edges bucketed by (type, width class)
   let colors = { nodes: {}, edges: {}, shared: null };
-  let threshold = 0, hidden = new Set(), highlightId = null;
-  let userMoved = false, width = 800, height = 400;
+  let threshold = 0, hidden = new Set(), highlightId = null, vis = new Uint8Array(0);
+  let userMoved = false, width = 800, height = 400, transform = d3.zoomIdentity;
+  let moving = false, idleTimer = 0, raf = 0;
 
-  // ----- zoom: ctrl+wheel / touchpad pinch (wheel + ctrlKey), drag background to pan -----
-  const zoom = d3.zoom().scaleExtent([MIN_K, MAX_K])
+  // ---------- painting ----------
+  const requestPaint = () => { if (!raf) raf = requestAnimationFrame(paint); };
+  function markMoving() {
+    moving = true;
+    clearTimeout(idleTimer);
+    idleTimer = setTimeout(() => { moving = false; requestPaint(); }, 160); // full-quality repaint once things settle
+  }
+  function paint() {
+    raf = 0;
+    const dpr = window.devicePixelRatio || 1;
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.setTransform(dpr * transform.k, 0, 0, dpr * transform.k, dpr * transform.x, dpr * transform.y);
+    ctx.lineCap = 'round';
+    ctx.globalAlpha = 0.8;
+    const stride = moving && visibleCount > MOVING_EDGE_BUDGET ? Math.ceil(visibleCount / MOVING_EDGE_BUDGET) : 1;
+    for (const g of groups) {
+      ctx.beginPath();
+      for (let i = 0; i < g.idx.length; i += stride) {
+        const e = g.idx[i], a = nodes[E.src[e]], b = nodes[E.tgt[e]];
+        ctx.moveTo(a.x, a.y);
+        ctx.lineTo(b.x, b.y);
+      }
+      ctx.strokeStyle = colors.edges[g.type] || '#000';
+      ctx.lineWidth = BINS[g.bin].width;
+      ctx.stroke();
+    }
+  }
+
+  /** Which edges are shown (score filter + hidden lists), bucketed for batched painting. */
+  function rebuildVisible() {
+    vis = Uint8Array.from(nodes, (n) => (nodeVisible(n, hidden) ? 1 : 0));
+    const counts = new Int32Array(8), bucketOf = new Uint8Array(E.src.length).fill(255);
+    for (let e = 0; e < E.src.length; e++) {
+      if (E.score[e] > threshold && vis[E.src[e]] && vis[E.tgt[e]]) {
+        const b = (E.type[e] ? 4 : 0) + binOf(E.score[e]);
+        bucketOf[e] = b; counts[b]++;
+      }
+    }
+    const lists = Array.from(counts, (c) => new Int32Array(c)), fill = new Int32Array(8);
+    for (let e = 0; e < bucketOf.length; e++) if (bucketOf[e] !== 255) lists[bucketOf[e]][fill[bucketOf[e]]++] = e;
+    groups = lists.map((idx, b) => ({ idx, type: b >= 4 ? 'expression' : 'annotation', bin: b % 4 })).filter((g) => g.idx.length);
+    visibleCount = groups.reduce((a, g) => a + g.idx.length, 0);
+    host.dataset.edges = String(visibleCount);
+    host.dataset.nodes = String(vis.reduce((a, v) => a + v, 0));
+  }
+
+  // ---------- zoom: ctrl+wheel / touchpad pinch (wheel + ctrlKey), drag background to pan ----------
+  // A mouse-wheel notch is one gentle fixed step (~x1.15); touchpad pinch sends many small deltas and stays proportional.
+  const wheelDelta = (e) => {
+    const dy = e.deltaY * (e.deltaMode === 1 ? 33 : e.deltaMode === 2 ? 400 : 1);
+    const mag = Math.abs(dy);
+    return -Math.sign(dy) * (mag >= 30 ? 0.2 : Math.min(mag * 0.02, 0.5));
+  };
+  const zoom = d3.zoom().scaleExtent([MIN_K, MAX_K]).wheelDelta(wheelDelta)
     .filter((e) => (e.type === 'wheel' ? e.ctrlKey : !e.ctrlKey && !e.button && e.type !== 'dblclick'))
     .on('zoom', (e) => {
-      viewport.attr('transform', e.transform);
+      transform = e.transform;
+      viewport.attr('transform', transform);
       if (e.sourceEvent) userMoved = true;
-      onZoom?.(e.transform.k);
+      markMoving(); requestPaint();
+      onZoom?.(transform.k);
     });
   svg.call(zoom).on('dblclick.zoom', null);
   svg.on('click', (e) => { if (e.target === svg.node()) onBackgroundClick?.(); });
 
   const ro = new ResizeObserver(() => {
     width = host.clientWidth || width; height = host.clientHeight || height;
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = Math.round(width * dpr); canvas.height = Math.round(height * dpr);
     svg.attr('width', width).attr('height', height).attr('viewBox', `0 0 ${width} ${height}`);
     if (sim) sim.force('center', d3.forceCenter(width / 2, height / 2)); // keep layout centred
     if (!userMoved && nodes.length) fit(false);
+    requestPaint();
   });
   ro.observe(host);
 
-  // ----- tooltip -----
+  // ---------- tooltip ----------
   const showTip = (e, html) => {
     tooltip.replaceChildren(...html);
     tooltip.hidden = false;
@@ -51,49 +116,60 @@ export function createGraph(host, { tooltip, listName, onZoom, onBackgroundClick
   };
   const hideTip = () => { tooltip.hidden = true; };
   const el = (tag, cls, text) => Object.assign(document.createElement(tag), { className: cls, textContent: text });
-
   const nodeColor = (n) => colorOf(n, colors);
-  const edgeColor = (d) => colors.edges[d.type] || '#000';
 
-  // ----- data -----
+  // ---------- data ----------
   function setData(newNodes, newEdges) {
     sim?.stop();
     nodes = newNodes.map((n) => ({ ...n }));
-    edges = newEdges.map((e) => ({ ...e }));
+    edges = newEdges;
     highlightId = null;
     userMoved = false;
-    edgeLayer.selectAll('*').remove();
     nodeLayer.selectAll('*').remove();
+    transform = d3.zoomIdentity;
+    viewport.attr('transform', transform);
     svg.call(zoom.transform, d3.zoomIdentity);
+
+    // edges -> typed arrays (indices into `nodes`)
+    const index = new Map(nodes.map((n, i) => [n.id, i]));
+    const m = edges.length;
+    E = { src: new Int32Array(m), tgt: new Int32Array(m), score: new Float32Array(m), type: new Uint8Array(m) };
+    edges.forEach((e, i) => {
+      E.src[i] = index.get(idOf(e.source)); E.tgt[i] = index.get(idOf(e.target));
+      E.score[i] = e.score; E.type[i] = e.type === 'expression' ? 1 : 0;
+    });
+
+    // the layout only needs each gene's strongest edges (all of them would be tens of thousands of springs)
+    const order = Array.from({ length: m }, (_, i) => i).sort((a, b) => E.score[b] - E.score[a]);
+    const used = new Int32Array(nodes.length), links = [];
+    for (const e of order) {
+      const s = E.src[e], t = E.tgt[e];
+      if (used[s] < LAYOUT_LINKS_PER_NODE || used[t] < LAYOUT_LINKS_PER_NODE) {
+        links.push({ source: s, target: t, score: E.score[e] });
+        used[s]++; used[t]++;
+      }
+    }
+    const deg = new Int32Array(nodes.length);
+    for (const l of links) { deg[l.source]++; deg[l.target]++; }
 
     // spread the start so the simulation doesn't begin from a single point
     nodes.forEach((n, i) => {
       const a = i * 2.399963, r = 22 * Math.sqrt(i + 1);
       n.x = width / 2 + r * Math.cos(a); n.y = height / 2 + r * Math.sin(a);
     });
-    const deg = new Map();
-    for (const e of edges) for (const id of [e.source, e.target]) deg.set(id, (deg.get(id) || 0) + 1);
     sim = d3.forceSimulation(nodes)
-      // every edge pulls, stronger / shorter for higher scores -> well-connected genes cluster slightly.
-      // Strength is divided by the smaller degree so dense graphs do not collapse into a point.
-      .force('link', d3.forceLink(edges).id((d) => d.id).distance((d) => 140 - 70 * d.score)
-        .strength((d) => (0.15 + 0.85 * d.score) / Math.min(deg.get(d.source.id ?? d.source), deg.get(d.target.id ?? d.target)) ** 0.8))
+      // higher scores pull harder and closer, so well-connected genes cluster slightly;
+      // strength is divided by the smaller degree so dense graphs do not collapse into a point
+      .force('link', d3.forceLink(links).distance((d) => 140 - 70 * d.score)
+        .strength((d) => (0.15 + 0.85 * d.score) / Math.min(deg[d.source.index], deg[d.target.index]) ** 0.8))
       .force('charge', d3.forceManyBody().strength(-220).distanceMax(500))
       .force('collide', d3.forceCollide(R + 4))
       .force('x', d3.forceX(width / 2).strength(0.04))
       .force('y', d3.forceY(height / 2).strength(0.06))
       .stop();
     sim.tick(Math.min(300, 60 + nodes.length));   // settle before the first paint
-    sim.on('tick', draw).alpha(0.05).restart();
+    sim.on('tick', () => { markMoving(); draw(); }).alpha(0.05).restart();
 
-    edgeSel = edgeLayer.selectAll('line.edge').data(edges).join('line').attr('class', 'edge')
-      .attr('stroke-linecap', 'round').attr('stroke-opacity', 0.8);
-    hitSel = edgeLayer.selectAll('line.hit').data(edges).join('line').attr('class', 'hit')
-      .attr('stroke', 'transparent').attr('stroke-width', 8)
-      .on('mousemove', (ev, d) => showTip(ev, [
-        el('div', 'tip-title', `${d.type === 'annotation' ? 'Annotation similarity' : 'Expression score'}: ${d.score.toFixed(2)}`),
-        el('div', 'tip-sub', `${idOf(d.source)} — ${idOf(d.target)}`)]))
-      .on('mouseleave', hideTip);
     nodeSel = nodeLayer.selectAll('circle').data(nodes, (d) => d.id).join('circle')
       .attr('r', R).attr('stroke-linejoin', 'round')
       .style('cursor', 'grab')
@@ -105,46 +181,39 @@ export function createGraph(host, { tooltip, listName, onZoom, onBackgroundClick
       .on('mouseleave', hideTip)
       .on('dblclick', (ev, d) => { d.fx = d.fy = null; ev.stopPropagation(); style(); sim.alpha(0.2).restart(); })
       .call(d3.drag()
-        .on('start', (ev, d) => { hideTip(); if (!ev.active) sim.alphaTarget(0.25).restart(); d.fx = d.x; d.fy = d.y; })
-        .on('drag', (ev, d) => { d.fx = ev.x; d.fy = ev.y; })
+        .on('start', (ev, d) => { hideTip(); markMoving(); if (!ev.active) sim.alphaTarget(0.25).restart(); d.fx = d.x; d.fy = d.y; })
+        .on('drag', (ev, d) => { markMoving(); d.fx = ev.x; d.fy = ev.y; })
         .on('end', (ev) => { if (!ev.active) sim.alphaTarget(0); style(); })); // fx/fy kept -> pinned
+    rebuildVisible();
     style();
     draw();
     fit(false);
   }
 
   function draw() {
-    const pos = (s) => s.attr('x1', (d) => d.source.x).attr('y1', (d) => d.source.y)
-      .attr('x2', (d) => d.target.x).attr('y2', (d) => d.target.y);
-    pos(edgeSel); pos(hitSel);
     nodeSel.attr('cx', (d) => d.x).attr('cy', (d) => d.y);
+    requestPaint();
   }
 
-  /** (Re)apply colours, visibility, highlight. Cheap – called for every state change. */
+  /** (Re)apply node colours, visibility and highlight. */
   function style() {
     if (!nodeSel) return;
-    const vis = new Map(nodes.map((n) => [n.id, nodeVisible(n, hidden)]));
-    const edgeOn = (d) => d.score > threshold && vis.get(idOf(d.source)) && vis.get(idOf(d.target));
-    edgeSel.attr('stroke', edgeColor).attr('stroke-width', (d) => edgeWidth(d.score))
-      .attr('display', (d) => (edgeOn(d) ? null : 'none'));
-    hitSel.attr('display', (d) => (edgeOn(d) ? null : 'none'));
-    nodeSel.attr('fill', nodeColor).attr('display', (d) => (vis.get(d.id) ? null : 'none'))
+    nodeSel.attr('fill', nodeColor).attr('display', (d, i) => (vis[i] ? null : 'none'))
       .attr('stroke', (d) => (d.id === highlightId ? '#000' : d.fx != null ? '#424753' : '#BDBDBD'))
       .attr('stroke-width', (d) => (d.id === highlightId ? 4 : d.fx != null ? 2 : 1))
       .classed('highlight', (d) => d.id === highlightId);
     nodeSel.filter((d) => d.id === highlightId).raise();
   }
 
-  // ----- view -----
+  // ---------- view ----------
   function fit(animate = true) {
-    const vis = nodes.filter((n) => nodeVisible(n, hidden));
-    if (!vis.length) return;
-    const [x0, x1] = d3.extent(vis, (n) => n.x), [y0, y1] = d3.extent(vis, (n) => n.y);
+    const shown = nodes.filter((n, i) => vis[i]);
+    if (!shown.length) return;
+    const [x0, x1] = d3.extent(shown, (n) => n.x), [y0, y1] = d3.extent(shown, (n) => n.y);
     const pad = 50, w = x1 - x0 + 2 * R, h = y1 - y0 + 2 * R;
     const k = Math.min(1.5, Math.max(MIN_K, Math.min((width - pad * 2) / w, (height - pad * 2) / h)));
     const t = d3.zoomIdentity.translate(width / 2 - (k * (x0 + x1)) / 2, height / 2 - (k * (y0 + y1)) / 2).scale(k);
-    const target = animate ? svg.transition().duration(450) : svg;
-    target.call(zoom.transform, t);
+    (animate ? svg.transition().duration(450) : svg).call(zoom.transform, t);
   }
 
   function highlight(id, { pan = true } = {}) {
@@ -160,18 +229,39 @@ export function createGraph(host, { tooltip, listName, onZoom, onBackgroundClick
     }
   }
 
+  /** The visible graph as a standalone SVG document (edges are canvas-painted, so they are rebuilt here). */
+  function toSvgString() {
+    const f = (v) => v.toFixed(1);
+    const parts = [`<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">`,
+      '<rect width="100%" height="100%" fill="#ffffff"/>',
+      `<g transform="translate(${transform.x} ${transform.y}) scale(${transform.k})">`];
+    for (const g of groups) {
+      let d = '';
+      for (let i = 0; i < g.idx.length; i++) {
+        const a = nodes[E.src[g.idx[i]]], b = nodes[E.tgt[g.idx[i]]];
+        d += `M${f(a.x)} ${f(a.y)}L${f(b.x)} ${f(b.y)}`;
+      }
+      parts.push(`<path d="${d}" fill="none" stroke="${colors.edges[g.type] || '#000'}" stroke-width="${BINS[g.bin].width}" stroke-opacity="0.8" stroke-linecap="round"/>`);
+    }
+    const layer = nodeLayer.node().cloneNode(true);
+    layer.querySelectorAll('[display="none"]').forEach((n) => n.remove());
+    parts.push(new XMLSerializer().serializeToString(layer), '</g></svg>');
+    return parts.join('');
+  }
+
   return {
     setData,
-    setColors(c) { colors = c; style(); },
-    setThreshold(v) { threshold = v; style(); },
-    setHidden(set) { hidden = set; style(); },
+    setColors(c) { colors = c; style(); requestPaint(); },
+    setThreshold(v) { threshold = v; rebuildVisible(); requestPaint(); },
+    setHidden(set) { hidden = set; rebuildVisible(); style(); requestPaint(); },
     highlight,
     clearHighlight() { highlightId = null; style(); },
     zoomTo(k) { svg.transition().duration(150).call(zoom.scaleTo, Math.min(MAX_K, Math.max(MIN_K, k))); },
     zoomBy(f) { svg.transition().duration(200).call(zoom.scaleBy, f); },
     reset() { userMoved = false; fit(true); },
-    svgNode: () => svg.node(),
-    destroy() { sim?.stop(); ro.disconnect(); svg.remove(); },
+    toSvgString,
+    size: () => ({ width, height }),
+    destroy() { sim?.stop(); ro.disconnect(); clearTimeout(idleTimer); cancelAnimationFrame(raf); svg.remove(); canvas.remove(); },
   };
 }
 export const ZOOM_RANGE = [MIN_K, MAX_K];

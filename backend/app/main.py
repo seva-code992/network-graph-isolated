@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -23,6 +24,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     experiments = make_source(settings.experiment_source)
     app = FastAPI(title="Network graph API")
     app.state.store = store
+    app.add_middleware(GZipMiddleware, minimum_size=1000)   # graphs with every edge are large JSON
 
     @app.get("/api/health")
     def health():

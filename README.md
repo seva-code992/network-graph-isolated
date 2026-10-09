@@ -52,5 +52,8 @@ Endpoints: `GET /api/species|experiments|lists|lists/{id}`, `POST /api/lists/par
 * Customize box (`frontend/src/customize.js`): home screen → palette screen (drag boxes onto colours; boxes dropped on each
   other share a colour; drag a name out of a box to separate it) or colour-picker screen (select a name, pick a colour; hex / RGB / HSL,
   opacity, eye-dropper where the browser supports it). Colours may carry opacity (`#rrggbbaa`).
+* Performance: edges are painted on a canvas (batched by colour/width), genes are SVG. While you pan/zoom/drag, graphs with more
+  than ~15k visible edges draw a sample of them and repaint in full once movement stops. The force layout uses each gene's 8
+  strongest edges only. Edges are not individually hoverable.
 * Graph interaction: Ctrl+scroll / pinch zooms, drag pans, dragging a gene pins it, double-click unpins.
 * Import `.tsv`: exactly two tab-separated columns (gene ID, description); optional header row; duplicates ignored; max 5 MB.

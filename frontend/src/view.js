@@ -24,7 +24,7 @@ export function createGraphView({ api, selection, colors, sourceName, speciesNam
   const emptyEl = h('div', { class: 'graph-empty', hidden: true });
   const filterVal = h('span', { class: 'filter-val' }, '0.00');
   const filter = h('input', { type: 'range', min: '0', max: '1', step: '0.01', value: '0', class: 'filter-range',
-    'aria-label': 'Minimum edge score', oninput: (e) => { st.threshold = +e.target.value; filterVal.textContent = fmt(st.threshold); refresh(); } });
+    'aria-label': 'Minimum edge score', oninput: (e) => { st.threshold = +e.target.value; filterVal.textContent = fmt(st.threshold); scheduleRefresh(); } });
   const zoomPct = h('span', { class: 'zoom-pct' }, '100%');
   const zoomRange = h('input', { type: 'range', class: 'zoom-range', min: '-300', max: '300', step: '1', value: '0',
     title: 'Zoom (Ctrl + scroll or pinch also works)', 'aria-label': 'Zoom',
@@ -129,8 +129,8 @@ export function createGraphView({ api, selection, colors, sourceName, speciesNam
       onclick: () => { st.exportOpen = false; renderExport(); fn(); } }, label);
     const vis = () => { const v = st.data.nodes.filter((n) => nodeVisible(n, st.hidden)); return [v, shownEdges()]; };
     exportMenu.append(
-      item('PNG image', () => exportPng(graph.svgNode(), 'network-graph'), 'Download the current view as a PNG image'),
-      item('SVG image', () => exportSvg(graph.svgNode(), 'network-graph'), 'Download the current view as a vector SVG'),
+      item('PNG image', () => exportPng(graph.toSvgString(), graph.size(), 'network-graph'), 'Download the current view as a PNG image'),
+      item('SVG image', () => exportSvg(graph.toSvgString(), 'network-graph'), 'Download the current view as a vector SVG'),
       item('TSV matrix', () => exportTsv(...vis(), 'network-graph'), 'Download the visible genes and their edge scores as a matrix'));
     exportBtn.disabled = !st.data;
   }
@@ -156,6 +156,9 @@ export function createGraphView({ api, selection, colors, sourceName, speciesNam
   }
 
   const shownEdges = () => (st.data ? visibleEdges(st.data.nodes, st.data.edges, st.threshold, st.hidden) : []);
+
+  let refreshQueued = false;
+  const scheduleRefresh = () => { if (!refreshQueued) { refreshQueued = true; requestAnimationFrame(() => { refreshQueued = false; refresh(); }); } };
 
   /** threshold / hidden-list changes: update the graph, the stats box and the hints. */
   function refresh() {
