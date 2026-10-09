@@ -1,17 +1,21 @@
 import * as d3 from 'd3';
 import { BINS, binOf, idOf, nodeColor as colorOf, nodeVisible } from './logic.js';
+import { louvain } from './cluster.js';
 
 const R = 12.5; // nodes are 25px, edges at most 0.5px (Figma)
 const MIN_K = 0.125, MAX_K = 8;
-const LAYOUT_LINKS_PER_NODE = 8;   // the force layout only uses each gene's strongest edges
+const LAYOUT_LINKS_PER_NODE = 8;   // grouping and layout only use each gene's strongest edges
+const GROUP_RESOLUTION = 1.2;      // >1 -> more, smaller groups
 const MOVING_EDGE_BUDGET = 15000;  // while moving, large graphs draw a sample of the edges
 
 /**
- * Force-directed network. Genes are SVG circles (interactive, exportable); the edges – tens of
+ * Clustered network: genes are grouped by their strongest edges, groups are placed apart from each other and the
+ * genes inside a group are laid out by a force simulation that is run once, to rest – nothing moves afterwards
+ * except the gene the user drags. Genes are SVG circles (interactive, exportable); the edges – tens of
  * thousands when every pair is connected – are painted on a canvas underneath, batched by colour and
  * width, so panning / zooming / dragging stays smooth.
  */
-export function createGraph(host, { tooltip, listName, onZoom, onBackgroundClick }) {
+export function createGraph(host, { tooltip, listName, onZoom }) {
   const canvas = d3.select(host).append('canvas').attr('class', 'graph-canvas').node();
   const ctx = canvas.getContext('2d');
   const svg = d3.select(host).append('svg').attr('class', 'graph-svg').attr('role', 'img')
@@ -19,7 +23,7 @@ export function createGraph(host, { tooltip, listName, onZoom, onBackgroundClick
   const viewport = svg.append('g').attr('class', 'viewport');
   const nodeLayer = viewport.append('g').attr('class', 'nodes');
 
-  let nodes = [], edges = [], sim = null, nodeSel;
+  let nodes = [], edges = [], nodeSel;
   let E = { src: new Int32Array(0), tgt: new Int32Array(0), score: new Float32Array(0), type: new Uint8Array(0) };
   let groups = [], visibleCount = 0;                 // visible edges bucketed by (type, width class)
   let colors = { nodes: {}, edges: {}, shared: null };
@@ -91,14 +95,12 @@ export function createGraph(host, { tooltip, listName, onZoom, onBackgroundClick
       onZoom?.(transform.k);
     });
   svg.call(zoom).on('dblclick.zoom', null);
-  svg.on('click', (e) => { if (e.target === svg.node()) onBackgroundClick?.(); });
 
   const ro = new ResizeObserver(() => {
     width = host.clientWidth || width; height = host.clientHeight || height;
     const dpr = window.devicePixelRatio || 1;
     canvas.width = Math.round(width * dpr); canvas.height = Math.round(height * dpr);
     svg.attr('width', width).attr('height', height).attr('viewBox', `0 0 ${width} ${height}`);
-    if (sim) sim.force('center', d3.forceCenter(width / 2, height / 2)); // keep layout centred
     if (!userMoved && nodes.length) fit(false);
     requestPaint();
   });
@@ -120,7 +122,6 @@ export function createGraph(host, { tooltip, listName, onZoom, onBackgroundClick
 
   // ---------- data ----------
   function setData(newNodes, newEdges) {
-    sim?.stop();
     nodes = newNodes.map((n) => ({ ...n }));
     edges = newEdges;
     highlightId = null;
@@ -149,26 +150,7 @@ export function createGraph(host, { tooltip, listName, onZoom, onBackgroundClick
         used[s]++; used[t]++;
       }
     }
-    const deg = new Int32Array(nodes.length);
-    for (const l of links) { deg[l.source]++; deg[l.target]++; }
-
-    // spread the start so the simulation doesn't begin from a single point
-    nodes.forEach((n, i) => {
-      const a = i * 2.399963, r = 22 * Math.sqrt(i + 1);
-      n.x = width / 2 + r * Math.cos(a); n.y = height / 2 + r * Math.sin(a);
-    });
-    sim = d3.forceSimulation(nodes)
-      // higher scores pull harder and closer, so well-connected genes cluster slightly;
-      // strength is divided by the smaller degree so dense graphs do not collapse into a point
-      .force('link', d3.forceLink(links).distance((d) => 140 - 70 * d.score)
-        .strength((d) => (0.15 + 0.85 * d.score) / Math.min(deg[d.source.index], deg[d.target.index]) ** 0.8))
-      .force('charge', d3.forceManyBody().strength(-220).distanceMax(500))
-      .force('collide', d3.forceCollide(R + 4))
-      .force('x', d3.forceX(width / 2).strength(0.04))
-      .force('y', d3.forceY(height / 2).strength(0.06))
-      .stop();
-    sim.tick(Math.min(300, 60 + nodes.length));   // settle before the first paint
-    sim.on('tick', () => { markMoving(); draw(); }).alpha(0.05).restart();
+    layout(links);
 
     nodeSel = nodeLayer.selectAll('circle').data(nodes, (d) => d.id).join('circle')
       .attr('r', R).attr('stroke-linejoin', 'round')
@@ -176,18 +158,44 @@ export function createGraph(host, { tooltip, listName, onZoom, onBackgroundClick
       .on('mousemove', (ev, d) => showTip(ev, [
         el('div', 'tip-title', d.id),
         el('div', 'tip-sub', `List: ${d.lists.map(listName).join(', ')}`),
-        el('div', 'tip-desc', d.description || 'No description'),
-        d.fx != null ? el('div', 'tip-hint', 'Pinned — double-click to unpin') : null].filter(Boolean)))
+        el('div', 'tip-desc', d.description || 'No description')]))
       .on('mouseleave', hideTip)
-      .on('dblclick', (ev, d) => { d.fx = d.fy = null; ev.stopPropagation(); style(); sim.alpha(0.2).restart(); })
-      .call(d3.drag()
-        .on('start', (ev, d) => { hideTip(); markMoving(); if (!ev.active) sim.alphaTarget(0.25).restart(); d.fx = d.x; d.fy = d.y; })
-        .on('drag', (ev, d) => { markMoving(); d.fx = ev.x; d.fy = ev.y; })
-        .on('end', (ev) => { if (!ev.active) sim.alphaTarget(0); style(); })); // fx/fy kept -> pinned
+      .call(d3.drag()   // genes can only be dragged (never selected); they stay where they are dropped
+        .on('start', () => { hideTip(); markMoving(); })
+        .on('drag', (ev, d) => { markMoving(); d.x = ev.x; d.y = ev.y; draw(); }));
     rebuildVisible();
     style();
     draw();
     fit(false);
+  }
+
+  /** Group genes by their strongest links, pack the groups apart, then settle each group with a force simulation. */
+  function layout(links) {
+    const n = nodes.length;
+    const comm = louvain(n, links.map((l) => ({ source: l.source, target: l.target, weight: l.score })), GROUP_RESOLUTION);
+    const members = [];
+    comm.forEach((c, i) => (members[c] ??= []).push(i));
+    // one circle per group, sized by its number of genes, packed with room around each
+    const circles = members.map((m, c) => ({ c, r: Math.sqrt(m.length) * R * 2.4 + 34 }));
+    d3.packSiblings(circles);
+    const centre = circles.map((o) => ({ x: width / 2 + o.x, y: height / 2 + o.y }));
+    members.forEach((m, c) => m.forEach((i, k) => {
+      const a = k * 2.399963, r = R * 1.8 * Math.sqrt(k);
+      nodes[i].x = centre[c].x + r * Math.cos(a); nodes[i].y = centre[c].y + r * Math.sin(a);
+    }));
+    const deg = new Int32Array(n);
+    for (const l of links) { deg[l.source]++; deg[l.target]++; }
+    const sim = d3.forceSimulation(nodes)
+      .force('link', d3.forceLink(links)
+        .distance((d) => (comm[d.source.index] === comm[d.target.index] ? 40 + 60 * (1 - d.score) : 220))
+        .strength((d) => (comm[d.source.index] === comm[d.target.index]
+          ? (0.2 + 0.8 * d.score) / Math.min(deg[d.source.index], deg[d.target.index]) ** 0.5 : 0.005)))
+      .force('charge', d3.forceManyBody().strength(-45).distanceMax(150))
+      .force('collide', d3.forceCollide(R + 3))
+      .force('x', d3.forceX((d) => centre[comm[d.index]].x).strength(0.22))
+      .force('y', d3.forceY((d) => centre[comm[d.index]].y).strength(0.22))
+      .stop();
+    sim.tick(300);   // ~ until the simulation has cooled completely; it is never restarted
   }
 
   function draw() {
@@ -199,8 +207,8 @@ export function createGraph(host, { tooltip, listName, onZoom, onBackgroundClick
   function style() {
     if (!nodeSel) return;
     nodeSel.attr('fill', nodeColor).attr('display', (d, i) => (vis[i] ? null : 'none'))
-      .attr('stroke', (d) => (d.id === highlightId ? '#000' : d.fx != null ? '#424753' : '#BDBDBD'))
-      .attr('stroke-width', (d) => (d.id === highlightId ? 4 : d.fx != null ? 2 : 1))
+      .attr('stroke', (d) => (d.id === highlightId ? '#000' : '#BDBDBD'))
+      .attr('stroke-width', (d) => (d.id === highlightId ? 4 : 1))
       .classed('highlight', (d) => d.id === highlightId);
     nodeSel.filter((d) => d.id === highlightId).raise();
   }
@@ -261,7 +269,7 @@ export function createGraph(host, { tooltip, listName, onZoom, onBackgroundClick
     reset() { userMoved = false; fit(true); },
     toSvgString,
     size: () => ({ width, height }),
-    destroy() { sim?.stop(); ro.disconnect(); clearTimeout(idleTimer); cancelAnimationFrame(raf); svg.remove(); canvas.remove(); },
+    destroy() { ro.disconnect(); clearTimeout(idleTimer); cancelAnimationFrame(raf); svg.remove(); canvas.remove(); },
   };
 }
 export const ZOOM_RANGE = [MIN_K, MAX_K];

@@ -53,7 +53,11 @@ Endpoints: `GET /api/species|experiments|lists|lists/{id}`, `POST /api/lists/par
   other share a colour; drag a name out of a box to separate it) or colour-picker screen (select a name, pick a colour; hex / RGB / HSL,
   opacity, eye-dropper where the browser supports it). Colours may carry opacity (`#rrggbbaa`).
 * Performance: edges are painted on a canvas (batched by colour/width), genes are SVG. While you pan/zoom/drag, graphs with more
-  than ~15k visible edges draw a sample of them and repaint in full once movement stops. The force layout uses each gene's 8
+  than ~15k visible edges draw a sample of them and repaint in full once movement stops. The grouping and layout use each gene's 8
   strongest edges only. Edges are not individually hoverable.
-* Graph interaction: Ctrl+scroll / pinch zooms, drag pans, dragging a gene pins it, double-click unpins.
+* Layout: genes are grouped (Louvain community detection on each gene's 8 strongest edges, `frontend/src/cluster.js`), the groups are
+  packed apart from each other and each group is settled by a force simulation that runs once, to rest. Nothing moves afterwards
+  except the gene you drag (it stays where dropped). Tune `GROUP_RESOLUTION` in `graph.js` for more / fewer groups.
+* Genes cannot be selected; a gene is highlighted only by clicking its ID in the statistics box, and any click outside that box clears it.
+* Graph interaction: Ctrl+scroll / pinch zooms, drag pans, dragging a gene moves it.
 * Import `.tsv`: exactly two tab-separated columns (gene ID, description); optional header row; duplicates ignored; max 5 MB.

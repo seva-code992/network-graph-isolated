@@ -4,6 +4,7 @@ import { binOf, edgeWidth, visibleEdges, geneStats, rank, matrixTsv, gradientCol
   nodeColor, mixColors, reservedColors, isReserved } from '../src/logic.js';
 import { buildColorModes, defaultShared } from '../src/colorModes.js';
 import * as G from '../src/groups.js';
+import { louvain } from '../src/cluster.js';
 import { hsvToRgb, rgbToHsv, rgbToHsl, hslToRgb, toHex, parseHex } from '../src/colorPicker.js';
 import { randomNodeColors, PALETTES } from '../src/palettes.js';
 
@@ -177,4 +178,23 @@ test('hex parsing accepts 3/6/8 digits and rejects junk', () => {
 test('colours with opacity still compare by their rgb part', () => {
   assert.ok(isReserved('#ff000080', ['#ff0000']));
   assert.equal(mixColors(['#ff000080', '#0000ff']), '#800080');
+});
+
+// ---- grouping ----
+const clique = (ids, w = 0.9) => ids.flatMap((a, i) => ids.slice(i + 1).map((b) => ({ source: a, target: b, weight: w })));
+
+test('louvain: separates groups of strongly connected genes joined by weak links', () => {
+  const links = [...clique([0, 1, 2, 3, 4]), ...clique([5, 6, 7, 8, 9]), { source: 4, target: 5, weight: 0.1 }];
+  const c = louvain(10, links);
+  assert.equal(new Set(c).size, 2);
+  assert.ok([0, 1, 2, 3, 4].every((i) => c[i] === c[0]) && [5, 6, 7, 8, 9].every((i) => c[i] === c[5]) && c[0] !== c[5]);
+});
+
+test('louvain: isolated genes stay on their own, result is deterministic and ids are 0..k-1', () => {
+  const links = clique([0, 1, 2]);
+  const c = louvain(5, links);
+  assert.equal(c[3] !== c[4] && c[3] !== c[0], true);
+  assert.deepEqual([...louvain(5, links)], [...c]);
+  assert.deepEqual([...new Set(c)].sort(), [0, 1, 2]);
+  assert.equal(louvain(3, []).length, 3);
 });

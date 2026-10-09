@@ -35,7 +35,6 @@ export function createGraphView({ api, selection, colors, sourceName, speciesNam
   const graph = createGraph(host, {
     tooltip, listName,
     onZoom(k) { zoomPct.textContent = `${Math.round(k * 100)}%`; zoomRange.value = String(Math.round(Math.log2(k) * 100)); },
-    onBackgroundClick() { stats.setSelected(null); graph.clearHighlight(); },
   });
   const stats = createStats({ onSelect: (id) => (id ? graph.highlight(id) : graph.clearHighlight()) });
   const legendEl = h('div', { class: 'legend' });
@@ -78,7 +77,7 @@ export function createGraphView({ api, selection, colors, sourceName, speciesNam
               zoomRange,
               h('button', { class: 'zbtn', title: 'Zoom in', 'aria-label': 'Zoom in', onclick: () => graph.zoomBy(1.4) }, '+')),
             zoomPct)),
-        h('div', { class: 'graph-hint' }, 'Ctrl + scroll to zoom · drag to pan · drag a gene to pin it · double-click to unpin')),
+        h('div', { class: 'graph-hint' }, 'Ctrl + scroll to zoom · drag to pan · drag a gene to move it')),
       h('aside', { class: 'graph-side' }, legendEl, stats.el)),
     customize.el, missingEl);
 
@@ -206,6 +205,8 @@ export function createGraphView({ api, selection, colors, sourceName, speciesNam
   }
 
   // ---------- init ----------
+  // a gene is highlighted only through the statistics box; any click elsewhere makes it neutral again
+  disposers.push(onOutsideClick([stats.el], () => { stats.setSelected(null); graph.clearHighlight(); }));
   disposers.push(onOutsideClick([expBtn, expList], () => { if (st.expOpen) { st.expOpen = false; renderExp(); } }));
   disposers.push(onOutsideClick([exportBtn, exportMenu], () => { if (st.exportOpen) { st.exportOpen = false; renderExport(); } }));
   const onKey = (e) => { if (e.key === 'Escape') { st.expOpen = st.exportOpen = false; renderExp(); renderExport(); customize.close(); } };
