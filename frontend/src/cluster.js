@@ -57,3 +57,20 @@ export function louvain(n, links, resolution = 1) {
   member.forEach((m, i) => { if (!seen.has(m)) seen.set(m, seen.size); out[i] = seen.get(m); });
   return out;
 }
+
+/**
+ * Genes with none of the given links share one group (instead of one group each); group ids are renumbered
+ * 0..k-1 with no gaps (the layout indexes its groups by id).
+ */
+export function groupUnlinked(comm, links) {
+  const linked = new Uint8Array(comm.length);
+  for (const l of links) { linked[l.source] = 1; linked[l.target] = 1; }
+  const ids = new Map(), out = new Int32Array(comm.length);
+  const loose = 'loose';
+  comm.forEach((c, i) => {
+    const key = linked[i] ? c : loose;
+    if (!ids.has(key)) ids.set(key, ids.size);
+    out[i] = ids.get(key);
+  });
+  return out;
+}

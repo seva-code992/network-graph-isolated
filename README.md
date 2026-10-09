@@ -32,13 +32,17 @@ Backend seams (replace the stand-ins, keep the HTTP contract):
 | Seam | Today | Replace with |
 |---|---|---|
 | `lists.ListsProvider` (`list_lists`, `get_list`, `save_list`) | JSON file in `DATA_DIR`, optional demo lists | the mother API's list store |
-| `experiments.ExperimentSource` | mock: `experiment1…5`, deterministic pseudo scores | Neo4j reader (`EXPERIMENT_SOURCE=neo4j`) |
+| `experiments.ExperimentSource` | `EXPERIMENT_SOURCE=neo4j`: the heatmap's experiments + expression values (`neo4j_experiments.py`); `mock` (default): `experiment1…5`, pseudo scores | — |
 | `embeddings.EmbeddingStore` | `.npy` files, memory-mapped | — |
 
 Endpoints: `GET /api/species|experiments|lists|lists/{id}`, `POST /api/lists/parse-tsv`, `POST /api/lists`, `POST /api/graph`.
 
 ## Behaviour notes
 
+* Expression (blue) edges: the experiment list is the heatmap's (`Annotation -[:HAS_EXPERIMENT]-> Experiment`, shown with its species).
+  The edge score is the Pearson correlation of two genes' rows in the heatmap matrix, i.e. of the stored `EXPRESSED_IN` values
+  across the experiment's samples (`coexpression.py`) - the same source for every experiment. Negative correlations give no edge;
+  with several experiments the best score wins. The precomputed `COEXPRESSED_WITH` edges are not used.
 * Annotation (black) edges: cosine similarity of embeddings, **different species only**. Expression (blue): **same species only**.
 * Every possible edge is returned (all cross-species pairs / all same-species pairs with a score > 0).
   `MAX_EDGES` (default 100000) refuses selections that would produce more, with a clear message.
@@ -55,6 +59,17 @@ Endpoints: `GET /api/species|experiments|lists|lists/{id}`, `POST /api/lists/par
 * Performance: edges are painted on a canvas (batched by colour/width), genes are SVG. While you pan/zoom/drag, graphs with more
   than ~15k visible edges draw a sample of them and repaint in full once movement stops. The grouping and layout use each gene's 8
   strongest edges only. Edges are not individually hoverable.
+* View: scroll (mouse wheel) or pinch zooms – a wheel notch is one fixed step, a touchpad pinch is proportional; a two-finger swipe on a
+  touchpad pans (`gestures.js` tells the two apart from the wheel events). The legend entries "Annotation similarity" / "Expression score"
+  hide / show that kind of edge. "Cluster by expression / annotation" re-lays out the genes using only that kind of edge (click again for the
+  combined layout). Clicking a gene in the statistics box enlarges it with a yellow glow and nudges its neighbours aside (`focus.js`).
+  Clicking a gene selects it (black outline): the genes joined to it by visible edges are pulled around it in rings (strongest edge
+  innermost), they and the gene shine, and other genes step aside; click it again or the background to release. Changing the score
+  filter, hidden lists or hidden edge types updates the pulled set.
+  Delete (or Backspace) removes the selected genes (Ctrl/Cmd+click selects several): a movable window asks first, with a "Do not ask again"
+  box (kept in the browser's localStorage, key `ng.skipDeleteConfirm`). The genes leave the graph and the gene selection, so they come back
+  unchecked in "Change selection". The pop-ups (selector, shared-genes box, customize box, confirmation) can be moved by dragging them.
+  "Change selection" reopens the selector with the previous lists and genes ticked.
 * Layout: genes are grouped (Louvain community detection on each gene's 8 strongest edges, `frontend/src/cluster.js`), the groups are
   packed apart from each other and each group is settled by a force simulation that runs once, to rest. Nothing moves afterwards
   except the gene you drag (it stays where dropped). Tune `GROUP_RESOLUTION` in `graph.js` for more / fewer groups.

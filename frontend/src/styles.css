@@ -117,8 +117,12 @@ h1, h2, h4 { margin: 0; }
 .graph-overlay, .graph-empty { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; text-align: center; padding: 24px; color: var(--muted); }
 .graph-overlay { background: rgba(255,255,255,.75); z-index: 4; } .graph-empty { pointer-events: none; z-index: 1; font-size: 12px; }
 .graph-tools { position: absolute; left: 11px; bottom: 10px; display: flex; flex-direction: column; gap: 8px; z-index: 2; align-items: flex-start; }
-.customize-btn, .zoom-box { background: rgba(222,227,235,.85); box-shadow: 0 0 4px rgba(0,0,0,.25); border-radius: 4px; border: 0; }
+.customize-btn, .cluster-box, .zoom-box { background: rgba(222,227,235,.85); box-shadow: 0 0 4px rgba(0,0,0,.25); border-radius: 4px; border: 0; }
 .customize-btn { padding: 4px 22px; font-size: 11px; color: #272727; }
+.cluster-box { display: flex; flex-direction: column; gap: 4px; padding: 6px 8px; width: 150px; }
+.cluster-btn { background: #fff; border: 0; border-radius: 3px; padding: 4px 6px; font-size: 10px; color: #272727; }
+.cluster-btn.active { background: #4D6699; color: #fff; }
+.cluster-btn:disabled { opacity: .5; cursor: not-allowed; }
 .zoom-box { padding: 6px 8px; width: 150px; text-align: center; font-size: 10px; position: relative; }
 .reset-btn { position: absolute; right: 6px; top: 3px; background: #fff; border: 0; font-size: 9px; color: #9282EF; padding: 1px 4px; }
 .zoom-row { display: flex; gap: 6px; align-items: center; margin-top: 14px; }
@@ -133,7 +137,9 @@ h1, h2, h4 { margin: 0; }
 .legend-item.off .legend-name { text-decoration: line-through; } .legend-item.off { opacity: .5; }
 .legend-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dot { width: 12px; height: 12px; border-radius: 50%; border: 1px solid #BDBDBD; flex: none; display: inline-block; }
-.edge-legend { margin-top: 8px; } .edge-legend-title { font-weight: 600; margin-bottom: 3px; }
+.edge-legend { margin-top: 8px; display: block; width: 100%; background: none; border: 0; padding: 3px 2px; text-align: left; font: inherit; color: inherit; border-radius: 4px; }
+.edge-legend:hover { background: var(--panel); }
+.edge-legend.off { opacity: .5; } .edge-legend.off .edge-legend-title { text-decoration: line-through; } .edge-legend-title { font-weight: 600; margin-bottom: 3px; }
 .edge-legend-row { display: flex; align-items: center; gap: 8px; height: 13px; } .sample { width: 27px; display: inline-block; }
 
 .stats { border: 1px solid #000; border-radius: 18px; background: rgba(232,237,247,.15); padding: 10px 10px 8px; flex: 1; min-height: 130px; display: flex; flex-direction: column; overflow: hidden; }
@@ -229,3 +235,14 @@ h1, h2, h4 { margin: 0; }
 .shared-hint { max-width: 378px; font-size: 11px; letter-spacing: .05em; line-height: 13px; }
 .btn-small { background: #9FC6FF; border: 0; border-radius: 5px; width: 86px; height: 21px; font-size: 11px; font-weight: 600; letter-spacing: .05em; color: #000; flex: none; }
 .warn-text { color: var(--red); }
+
+/* ---- movable pop-ups, deleting genes ---- */
+.selector-title, .customize-head, .shared-title, .confirm-title, .details-title-row, .eyebrow { cursor: grab; }
+.confirm-box { width: 380px; max-width: 100%; padding: 22px 26px 18px; border-radius: 14px; box-shadow: 0 6px 20px rgba(0,0,0,.25); }
+.confirm-title { font-size: 16px; margin: 0 0 10px; }
+.confirm-text { margin: 0 0 10px; font-size: 12px; line-height: 17px; }
+.confirm-ids { max-height: 70px; overflow: auto; margin-bottom: 10px; font-size: 11px; color: var(--muted); overflow-wrap: anywhere; }
+.confirm-never { display: flex; align-items: center; gap: 6px; font-size: 11px; margin-bottom: 14px; }
+.confirm-actions { display: flex; justify-content: flex-end; gap: 10px; }
+.graph-toast { position: absolute; top: 12px; left: 50%; transform: translateX(-50%); z-index: 4; background: #1A1C26; color: #fff;
+  font-size: 11px; padding: 6px 12px; border-radius: 6px; box-shadow: 0 2px 8px rgba(0,0,0,.3); pointer-events: none; }

@@ -1,6 +1,7 @@
-import { h, clear, svgIcon, onOutsideClick } from './dom.js';
+import { h, clear, svgIcon, onOutsideClick, makeDraggable } from './dom.js';
 
 const TICK = 'M2 7.5 5.5 11 12 3';
+const SCROLLERS = ['.list-rows'];
 const MAX_TSV_BYTES = 5 * 1024 * 1024;
 
 const checkMark = (on) =>
@@ -10,13 +11,15 @@ const checkMark = (on) =>
  * Gene-selection dialog shown after "Network graph" is clicked.
  * onProceed(selection) gets [{id, gene_ids?}] (gene_ids omitted = whole list).
  */
-export function createSelector({ api, listId, selectedGeneIds, onProceed, onClose }) {
+export function createSelector({ api, listId, selectedGeneIds, initialSelection, onProceed, onClose }) {
   const s = {
     lists: [], details: new Map(), checked: new Set(), selected: new Map(), // listId -> Set|null(all)
     open: null, error: '', loading: true, species: [], imp: null,
   };
   const root = h('div', { class: 'overlay', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Select genes' });
   let disposeOutside = () => {};
+  // the dialog can be moved by dragging its title / empty areas (not the lists, which are for clicking)
+  const drag = makeDraggable(root, () => root.querySelector('.selector, .details'), { skip: '.list-rows,.gene-panel,.details-card' });
 
   // ---------- state helpers ----------
   const total = (l) => l.n_genes;
@@ -39,8 +42,12 @@ export function createSelector({ api, listId, selectedGeneIds, onProceed, onClos
   // ---------- rendering ----------
   function render() {
     disposeOutside();
+    // the dialog is rebuilt on every change; keep the scrolled-to position of the list box
+    const scroll = Object.fromEntries(SCROLLERS.map((c) => [c, root.querySelector(c)?.scrollTop || 0]));
     clear(root);
     root.append(s.imp ? renderDetails() : renderSelector());
+    drag.apply();
+    for (const c of SCROLLERS) { const el = root.querySelector(c); if (el) el.scrollTop = scroll[c]; }
     placePanel();
   }
 
@@ -238,7 +245,12 @@ export function createSelector({ api, listId, selectedGeneIds, onProceed, onClos
       s.species = species;
       const src = lists.find((l) => l.id === listId) || lists[0];
       s.lists = src ? [src, ...lists.filter((l) => l !== src)] : [];
-      if (src) {
+      const prior = (initialSelection || []).filter((p) => lists.some((l) => l.id === p.id));
+      if (prior.length) {
+        // coming back via "Change selection": show what was selected, genes included
+        s.lists = [...lists.filter((l) => prior.some((p) => p.id === l.id)), ...lists.filter((l) => !prior.some((p) => p.id === l.id))];
+        for (const p of prior) { s.checked.add(p.id); s.selected.set(p.id, p.gene_ids ? new Set(p.gene_ids) : null); }
+      } else if (src) {
         s.checked.add(src.id);
         // genes picked on the list page before clicking "Network graph" -> "Selected genes"
         s.selected.set(src.id, selectedGeneIds?.length ? new Set(selectedGeneIds) : null);
@@ -250,5 +262,5 @@ export function createSelector({ api, listId, selectedGeneIds, onProceed, onClos
     render();
   })();
 
-  return { el: root, destroy() { disposeOutside(); document.removeEventListener('keydown', onKey); root.remove(); } };
+  return { el: root, destroy() { drag.destroy(); disposeOutside(); document.removeEventListener('keydown', onKey); root.remove(); } };
 }

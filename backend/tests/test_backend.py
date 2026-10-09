@@ -128,3 +128,34 @@ def test_shared_genes(client):
     # graph nodes carry all their lists
     g = client.post("/api/graph", json={"lists": [{"id": a}, {"id": b}]}).json()
     assert len(g["nodes"]) == 9 and sum(len(n["lists"]) > 1 for n in g["nodes"]) == 3
+
+
+# ---- real experiment source (Neo4j reader, driven by a fake driver) ----
+def test_expression_pairs_is_pearson():
+    from app.coexpression import expression_pairs
+    rows = [[1, 2, 3, 4], [2, 4, 6, 8], [4, 3, 2, 1], [5, 5, 5, 5], [1, None, 3, 4]]
+    p = expression_pairs(["a", "b", "c", "flat", "gap"], rows)
+    assert p[("a", "b")] == 1.0                       # same shape -> r = 1
+    assert ("a", "c") not in p                        # anti-correlated -> no edge
+    assert not any("flat" in k for k in p)            # constant profile -> no edge
+    assert p[("a", "gap")] > 0.9                      # missing value filled with the gene mean
+
+
+class FakeDriver:
+    def execute_query(self, query, **params):
+        if "HAS_EXPERIMENT" in query:
+            return [{"annotation": "potra-v2.2", "id": "potra-v2.2-x", "name": "X", "description": None},
+                    {"annotation": "picab-v2.0", "id": "picab-v2.0-y", "name": "Y", "description": "d"}], None, None
+        data = {"g1": [1, 2, 3], "g2": [2, 4, 7], "g3": [3, 2, 1], "g4": [None] * 3}
+        return [{"geneId": g, "value": v} for g in params["geneIds"] for v in data[g]], None, None
+
+
+def test_neo4j_source_lists_and_builds_edges():
+    from app.neo4j_experiments import Neo4jExperimentSource
+    src = Neo4jExperimentSource("", "", "", driver=FakeDriver())
+    assert [(e["id"], e["species"]) for e in src.list_experiments()] == [("potra-v2.2-x", "potra"), ("picab-v2.0-y", "picab")]
+    genes = [("g1", "potra"), ("g2", "potra"), ("g3", "potra"), ("g4", "potra"), ("g1", "picab")]
+    edges = src.expression_edges(["potra-v2.2-x"], genes)
+    assert set(edges) == {("g1", "g2")} and 0.9 < edges[("g1", "g2")] <= 1
+    with pytest.raises(KeyError):
+        src.expression_edges(["nope"], genes)

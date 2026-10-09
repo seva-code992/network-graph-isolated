@@ -18,12 +18,12 @@ export const edgeWidth = (score) => BINS[binOf(score)].width;
 /** A gene is hidden only when every list it belongs to is hidden. */
 export const nodeVisible = (node, hiddenLists) => node.lists.some((l) => !hiddenLists.has(l));
 
-/** Edges whose score is greater than `threshold` and whose two genes are visible. */
-export function visibleEdges(nodes, edges, threshold, hiddenLists) {
+/** Edges whose score is greater than `threshold`, whose type is not hidden and whose two genes are visible. */
+export function visibleEdges(nodes, edges, threshold, hiddenLists, hiddenTypes = new Set()) {
   const byId = new Map(nodes.map((n) => [n.id, n]));
   return edges.filter((e) => {
     const s = byId.get(idOf(e.source)), t = byId.get(idOf(e.target));
-    return e.score > threshold && s && t && nodeVisible(s, hiddenLists) && nodeVisible(t, hiddenLists);
+    return e.score > threshold && !hiddenTypes.has(e.type) && s && t && nodeVisible(s, hiddenLists) && nodeVisible(t, hiddenLists);
   });
 }
 // d3.forceLink replaces ids by node objects

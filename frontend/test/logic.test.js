@@ -4,7 +4,7 @@ import { binOf, edgeWidth, visibleEdges, geneStats, rank, matrixTsv, gradientCol
   nodeColor, mixColors, reservedColors, isReserved } from '../src/logic.js';
 import { buildColorModes, defaultShared } from '../src/colorModes.js';
 import * as G from '../src/groups.js';
-import { louvain } from '../src/cluster.js';
+import { louvain, groupUnlinked } from '../src/cluster.js';
 import { hsvToRgb, rgbToHsv, rgbToHsl, hslToRgb, toHex, parseHex } from '../src/colorPicker.js';
 import { randomNodeColors, PALETTES } from '../src/palettes.js';
 
@@ -197,4 +197,21 @@ test('louvain: isolated genes stay on their own, result is deterministic and ids
   assert.deepEqual([...louvain(5, links)], [...c]);
   assert.deepEqual([...new Set(c)].sort(), [0, 1, 2]);
   assert.equal(louvain(3, []).length, 3);
+});
+
+test('hiding an edge type removes those edges (and their effect on the stats)', () => {
+  const kinds = (hidden) => visibleEdges(nodes, edges, 0, new Set(), new Set(hidden)).map((e) => e.type);
+  assert.ok(kinds([]).includes('annotation'));
+  assert.ok(!kinds(['annotation']).includes('annotation'));
+  assert.deepEqual(kinds(['annotation', 'expression']), []);
+});
+
+test('groupUnlinked: genes without links share one group, ids stay 0..k-1 without gaps', () => {
+  // 6 genes; 0-1 and 2-3 linked (louvain gave them 0 and 1), 4 and 5 were singletons (ids 2 and 3)
+  const comm = Int32Array.from([0, 0, 1, 1, 2, 3]);
+  const out = groupUnlinked(comm, [{ source: 0, target: 1 }, { source: 2, target: 3 }]);
+  assert.deepEqual([...out], [0, 0, 1, 1, 2, 2]);
+  assert.deepEqual([...groupUnlinked(Int32Array.from([0, 1, 2]), [])], [0, 0, 0]);
+  const gap = groupUnlinked(Int32Array.from([0, 2, 2, 5]), [{ source: 1, target: 2 }]);
+  assert.deepEqual([...gap], [0, 1, 1, 0]);   // 0 and 3 are unlinked -> one group; no id is skipped
 });

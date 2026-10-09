@@ -18,7 +18,7 @@ import './styles.css';
  */
 export function openNetworkGraph({ host, apiBase = '', listId, selectedGeneIds = [], onClose = () => {} }) {
   const api = createApi(apiBase);
-  let selector = null, view = null, dialog = null;
+  let selector = null, view = null, dialog = null, lastSelection = null;   // lastSelection: shown again by "Change selection"
   const scope = document.createElement('div');
   scope.className = 'ng-root';
   host.append(scope);
@@ -28,7 +28,7 @@ export function openNetworkGraph({ host, apiBase = '', listId, selectedGeneIds =
     dialog?.destroy(); dialog = null;
     scope.classList.remove('has-graph');
     selector?.destroy();
-    selector = createSelector({ api, listId, selectedGeneIds,
+    selector = createSelector({ api, listId, selectedGeneIds, initialSelection: lastSelection,
       onClose: () => { selector.destroy(); selector = null; onClose(); },
       onProceed: (selection) => proceed(selection) });
     scope.append(selector.el);
@@ -37,6 +37,7 @@ export function openNetworkGraph({ host, apiBase = '', listId, selectedGeneIds =
   /** Selector done: ask how to colour genes shared between lists (if any), then build the graph. */
   async function proceed(selection) {
     selector?.destroy(); selector = null;
+    lastSelection = selection;
     let lists = [], species = [], shared = [];
     try { [lists, species] = await Promise.all([api.lists(), api.species()]); } catch { /* names are cosmetic */ }
     try { shared = (await api.sharedGenes(selection)).genes; } catch { /* the graph request will report real errors */ }
@@ -60,7 +61,7 @@ export function openNetworkGraph({ host, apiBase = '', listId, selectedGeneIds =
       api, selection, colors,
       sourceName: byId.get(listId)?.name ?? picked[0]?.name ?? 'Network graph',
       speciesNames: [...new Set(picked.map((l) => speciesName.get(l.species) ?? l.species))],
-      onChangeSelection: showSelector,
+      onChangeSelection: (current) => { lastSelection = current; showSelector(); },
       onBack: () => { destroy(); onClose(); },
     });
     scope.classList.add('has-graph');

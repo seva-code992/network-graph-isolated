@@ -1,8 +1,8 @@
 """Expression-experiment sources.
 
-The real source is the Neo4j database. Its schema is not wired up yet, so for now the mock source
-provides a fixed list of experiments plus deterministic pseudo expression scores. Add the
-Neo4j-backed implementation of `ExperimentSource` and select it with EXPERIMENT_SOURCE=neo4j.
+`neo4j_experiments.Neo4jExperimentSource` reads the real experiments (EXPERIMENT_SOURCE=neo4j, the same
+list and expression values the heatmap uses). The mock source provides a fixed list of experiments plus
+deterministic pseudo scores, for development and tests without a database.
 """
 from __future__ import annotations
 
@@ -64,9 +64,10 @@ class MockExperimentSource:
         return out
 
 
-def make_source(kind: str) -> ExperimentSource:
+def make_source(kind: str, settings=None) -> ExperimentSource:
     if kind == "mock":
         return MockExperimentSource()
-    raise NotImplementedError(
-        f"EXPERIMENT_SOURCE={kind!r}: the Neo4j experiment source is not implemented yet"
-    )
+    if kind == "neo4j":
+        from .neo4j_experiments import Neo4jExperimentSource
+        return Neo4jExperimentSource(settings.neo4j_uri, settings.neo4j_user, settings.neo4j_password)
+    raise ValueError(f"Unknown EXPERIMENT_SOURCE {kind!r} (use 'mock' or 'neo4j')")

@@ -1,8 +1,9 @@
-import { h, clear, onOutsideClick } from './dom.js';
+import { h, clear, onOutsideClick, lineSample, makeDraggable } from './dom.js';
+import { confirmDeleteGenes, deleteConfirmSkipped } from './confirm.js';
 import { createGraph, ZOOM_RANGE } from './graph.js';
 import { createStats } from './stats.js';
 import { createCustomize } from './customize.js';
-import { BINS, nodeVisible, visibleEdges } from './logic.js';
+import { BINS, idOf, nodeVisible, visibleEdges } from './logic.js';
 import { buildColorModes } from './colorModes.js';
 import { exportPng, exportSvg, exportTsv } from './export.js';
 
@@ -12,9 +13,10 @@ const fmt = (x) => x.toFixed(2);
 export function createGraphView({ api, selection, colors, sourceName, speciesNames, onChangeSelection, onBack }) {
   const st = {
     data: null, loading: true, error: '', experiments: [], expIds: [], threshold: 0,
-    hidden: new Set(), colors, seq: 0, showMissing: false, expOpen: false, exportOpen: false,
+    hidden: new Set(), hiddenTypes: new Set(), cluster: null, colors, seq: 0, showMissing: false, expOpen: false, exportOpen: false,
   };
   const disposers = [];
+  let current = selection.map((s) => ({ ...s }));   // the genes in the graph: shrinks when genes are deleted
   const listName = (id) => st.data?.lists.find((l) => l.id === id)?.name ?? id;
 
   // ---------- skeleton ----------
@@ -27,13 +29,18 @@ export function createGraphView({ api, selection, colors, sourceName, speciesNam
     'aria-label': 'Minimum edge score', oninput: (e) => { st.threshold = +e.target.value; filterVal.textContent = fmt(st.threshold); scheduleRefresh(); } });
   const zoomPct = h('span', { class: 'zoom-pct' }, '100%');
   const zoomRange = h('input', { type: 'range', class: 'zoom-range', min: '-300', max: '300', step: '1', value: '0',
-    title: 'Zoom (Ctrl + scroll or pinch also works)', 'aria-label': 'Zoom',
+    title: 'Zoom (scroll or pinch also works)', 'aria-label': 'Zoom',
     oninput: (e) => graph.zoomTo(2 ** (+e.target.value / 100)) });
+  const clusterBtns = {
+    expression: h('button', { class: 'cluster-btn', onclick: () => setCluster('expression') }, 'Cluster by expression'),
+    annotation: h('button', { class: 'cluster-btn', onclick: () => setCluster('annotation') }, 'Cluster by annotation'),
+  };
   const customizeBtn = h('button', { class: 'customize-btn', title: 'Customize the colours of nodes and edges',
     onclick: () => customize.toggle() }, 'Customize');
 
   const graph = createGraph(host, {
     tooltip, listName,
+    onSelect(ids) { if (ids.length) stats.setSelected(null); },   // a clicked gene replaces the one located via the statistics box
     onZoom(k) { zoomPct.textContent = `${Math.round(k * 100)}%`; zoomRange.value = String(Math.round(Math.log2(k) * 100)); },
   });
   const stats = createStats({ onSelect: (id) => (id ? graph.highlight(id) : graph.clearHighlight()) });
@@ -53,11 +60,12 @@ export function createGraphView({ api, selection, colors, sourceName, speciesNam
   const exportBtn = h('button', { class: 'export-btn', title: 'Export the graph', onclick: () => { st.exportOpen = !st.exportOpen; renderExport(); } }, 'Export ▾');
   const exportMenu = h('div', { class: 'popover export-menu', hidden: true });
   const missingEl = h('div', { class: 'note', hidden: true });
+  const toastEl = h('div', { class: 'graph-toast', hidden: true, role: 'status' });
 
   const el = h('div', { class: 'graph-page' },
     h('nav', { class: 'breadcrumb' }, 'Lists › ',
       h('button', { class: 'link', onclick: onBack, title: 'Back to the list page' }, sourceName), ' › Network graph', ' ',
-      h('button', { class: 'link', onclick: onChangeSelection, title: 'Go back to the gene selector' }, '· Change selection')),
+      h('button', { class: 'link', onclick: () => onChangeSelection(current), title: 'Go back to the gene selector' }, '· Change selection')),
     h('section', { class: 'card header-card' },
       h('div', { class: 'header-left' }, h('h1', {}, sourceName), h('div', { class: 'subtitle' }, 'Network graph'), tagsEl),
       h('div', { class: 'header-mid' }, h('div', { class: 'field-label' }, 'Expression experiment'),
@@ -68,8 +76,9 @@ export function createGraphView({ api, selection, colors, sourceName, speciesNam
         h('div', { class: 'score-filter', title: 'Only edges with a score greater than this value are shown' },
           h('div', { class: 'filter-title' }, 'Score filter ', filterVal),
           h('div', { class: 'filter-box' }, h('span', {}, '0'), filter, h('span', {}, '1'))),
-        emptyEl, loadingEl,
-        h('div', { class: 'graph-tools' }, customizeBtn,
+        emptyEl, loadingEl, toastEl,
+        h('div', { class: 'graph-tools' },
+          h('div', { class: 'cluster-box', role: 'group', 'aria-label': 'Layout' }, clusterBtns.expression, clusterBtns.annotation), customizeBtn,
           h('div', { class: 'zoom-box' },
             h('button', { class: 'reset-btn', title: 'Reset the view to fit the whole graph', onclick: () => graph.reset() }, 'Reset'),
             h('div', { class: 'zoom-row' },
@@ -77,7 +86,7 @@ export function createGraphView({ api, selection, colors, sourceName, speciesNam
               zoomRange,
               h('button', { class: 'zbtn', title: 'Zoom in', 'aria-label': 'Zoom in', onclick: () => graph.zoomBy(1.4) }, '+')),
             zoomPct)),
-        h('div', { class: 'graph-hint' }, 'Ctrl + scroll to zoom · drag to pan · drag a gene to move it')),
+        h('div', { class: 'graph-hint' }, 'Scroll or pinch to zoom · drag or swipe to pan · click a gene to select it (Ctrl+click: several, Delete: remove) · drag a gene to move it')),
       h('aside', { class: 'graph-side' }, legendEl, stats.el)),
     customize.el, missingEl);
 
@@ -99,13 +108,16 @@ export function createGraphView({ api, selection, colors, sourceName, speciesNam
         title: st.hidden.has(l.id) ? 'Click to show the nodes and edges of this list' : 'Click to hide the nodes and edges of this list',
         onclick: () => { st.hidden.has(l.id) ? st.hidden.delete(l.id) : st.hidden.add(l.id); renderLegend(); refresh(); },
       }, h('span', { class: 'dot', style: { background: c.nodes[l.id] } }), h('span', { class: 'legend-name' }, l.name)))),
-      edgeLegend('Annotation similarity', c.edges.annotation, 'Black lines connect genes of different species, by similarity of their annotation embeddings'),
-      edgeLegend('Expression score', c.edges.expression, 'Blue lines connect genes of the same species, by expression score in the selected experiments'));
+      edgeLegend('annotation', 'Annotation similarity', c.edges.annotation, 'Black lines connect genes of different species, by similarity of their annotation embeddings'),
+      edgeLegend('expression', 'Expression score', c.edges.expression, 'Blue lines connect genes of the same species, by expression score in the selected experiments'));
   }
-  const edgeLegend = (title, color, tip) => h('div', { class: 'edge-legend', title },
+  const edgeLegend = (type, title, color, tip) => h('button', {
+    class: 'edge-legend' + (st.hiddenTypes.has(type) ? ' off' : ''), 'aria-pressed': String(!st.hiddenTypes.has(type)),
+    title: `${tip}. Click to ${st.hiddenTypes.has(type) ? 'show' : 'hide'} these edges`,
+    onclick: () => { st.hiddenTypes.has(type) ? st.hiddenTypes.delete(type) : st.hiddenTypes.add(type); renderLegend(); refresh(); } },
     h('div', { class: 'edge-legend-title' }, title),
     BINS.map((b) => h('div', { class: 'edge-legend-row' },
-      h('span', { class: 'sample', style: { borderTop: `${b.width}px solid ${color}` } }),
+      lineSample(color, b.width),
       h('span', {}, `${fmt(b.min)}–${fmt(b.max)}`))));
 
   function renderExp() {
@@ -117,7 +129,8 @@ export function createGraphView({ api, selection, colors, sourceName, speciesNam
     clear(expList);
     expList.append(...st.experiments.map((x) => h('label', { class: 'exp-item', title: x.description || x.name, role: 'option',
       'aria-selected': String(st.expIds.includes(x.id)) },
-      h('input', { type: 'checkbox', checked: st.expIds.includes(x.id), onchange: () => toggleExperiment(x.id) }), x.name)));
+      h('input', { type: 'checkbox', checked: st.expIds.includes(x.id), onchange: () => toggleExperiment(x.id) }), x.name,
+      x.species ? h('span', { class: 'exp-species' }, ` (${x.species})`) : null)));
     expDesc.textContent = st.expIds.length ? `Blue edges: expression in ${st.expIds.join(', ')}`
       : 'Select one or more experiments to add expression (blue) edges';
   }
@@ -154,7 +167,7 @@ export function createGraphView({ api, selection, colors, sourceName, speciesNam
       : h('div', { class: 'spinner-text' }, 'Building graph…'));
   }
 
-  const shownEdges = () => (st.data ? visibleEdges(st.data.nodes, st.data.edges, st.threshold, st.hidden) : []);
+  const shownEdges = () => (st.data ? visibleEdges(st.data.nodes, st.data.edges, st.threshold, st.hidden, st.hiddenTypes) : []);
 
   let refreshQueued = false;
   const scheduleRefresh = () => { if (!refreshQueued) { refreshQueued = true; requestAnimationFrame(() => { refreshQueued = false; refresh(); }); } };
@@ -164,12 +177,69 @@ export function createGraphView({ api, selection, colors, sourceName, speciesNam
     if (!st.data) return;
     graph.setThreshold(st.threshold);
     graph.setHidden(st.hidden);
+    graph.setHiddenTypes(st.hiddenTypes);
     const edges = shownEdges();
     stats.update(edges);
     emptyEl.hidden = st.loading || edges.length > 0;
     emptyEl.textContent = st.data.edges.length === 0
       ? 'No edges to show. Annotation edges need genes from at least two species; choose an expression experiment for same-species edges.'
       : 'No edges above the current score filter.';
+  }
+
+  // ---------- deleting genes ----------
+  let toastTimer;
+  const toast = (text) => {
+    toastEl.textContent = text; toastEl.hidden = false;
+    clearTimeout(toastTimer); toastTimer = setTimeout(() => { toastEl.hidden = true; }, 3500);
+  };
+  let asking = false;
+
+  /** Delete the selected genes (Delete key): out of the graph, and out of the gene selection. */
+  async function deleteSelected() {
+    const ids = graph.selectedIds();
+    if (!ids.length || !st.data || st.loading || asking) return;
+    if (ids.length >= st.data.nodes.length) return toast('A graph needs at least one gene – select fewer genes to delete.');
+    if (!deleteConfirmSkipped()) {
+      asking = true;
+      const ok = await confirmDeleteGenes(ids, el.closest('.ng-root') ?? document.body);
+      asking = false;
+      if (!ok || !st.data) return;
+    }
+    const gone = new Set(ids);
+    const touched = new Set(st.data.nodes.filter((n) => gone.has(n.id)).flatMap((n) => n.lists));
+    st.data = { ...st.data, nodes: st.data.nodes.filter((n) => !gone.has(n.id)),
+      edges: st.data.edges.filter((e) => !gone.has(idOf(e.source)) && !gone.has(idOf(e.target))),
+      missing: st.data.missing.filter((m) => !gone.has(m.gene_id)) };
+    // every affected list now names its remaining genes explicitly (a list left empty drops out)
+    current = current.flatMap((s) => {
+      if (!touched.has(s.id)) return [s];
+      const rest = st.data.nodes.filter((n) => n.lists.includes(s.id)).map((n) => n.id);
+      return rest.length ? [{ id: s.id, gene_ids: rest }] : [];
+    });
+    graph.removeNodes(ids);
+    stats.setSelected(null);
+    renderTags(); renderMissing(); renderCluster();
+    refresh();
+  }
+
+  // ---------- clustering ----------
+  /** Lay the genes out by one kind of edge only; clicking the active button goes back to the combined layout. */
+  function setCluster(type) {
+    st.cluster = st.cluster === type ? null : type;
+    stats.setSelected(null);
+    graph.recluster(st.cluster);
+    renderCluster();
+  }
+  function renderCluster() {
+    for (const [type, btn] of Object.entries(clusterBtns)) {
+      const has = !!st.data?.edges.some((e) => e.type === type);
+      btn.disabled = !has;
+      btn.classList.toggle('active', st.cluster === type);
+      btn.setAttribute('aria-pressed', String(st.cluster === type));
+      btn.title = !has ? (type === 'expression' ? 'Choose an expression experiment first' : 'Annotation edges need genes from at least two species')
+        : st.cluster === type ? 'Click to go back to the combined layout'
+        : `Group the genes by their ${type} edges only`;
+    }
   }
 
   // ---------- data ----------
@@ -186,15 +256,16 @@ export function createGraphView({ api, selection, colors, sourceName, speciesNam
     st.loading = true; st.error = '';
     renderStatus();
     try {
-      const data = await api.graph({ lists: selection, experiment_ids: st.expIds });
+      const data = await api.graph({ lists: current, experiment_ids: st.expIds });
       if (seq !== st.seq) return; // a newer request superseded this one
       st.data = data;
+      if (st.cluster && !data.edges.some((e) => e.type === st.cluster)) st.cluster = null;   // e.g. the experiment was removed
       graph.setColors(st.colors);
-      graph.setData(data.nodes, data.edges);        // resets the layout, pins and view
+      graph.setData(data.nodes, data.edges, st.cluster);   // resets the layout, pins and view
       graph.setThreshold(st.threshold);
       graph.setHidden(st.hidden);
       stats.setSelected(null);
-      renderTags(); renderLegend(); renderMissing(); renderExport();
+      renderTags(); renderLegend(); renderMissing(); renderExport(); renderCluster();
     } catch (e) {
       if (seq !== st.seq) return;
       st.error = e.message;
@@ -209,16 +280,24 @@ export function createGraphView({ api, selection, colors, sourceName, speciesNam
   disposers.push(onOutsideClick([stats.el], () => { stats.setSelected(null); graph.clearHighlight(); }));
   disposers.push(onOutsideClick([expBtn, expList], () => { if (st.expOpen) { st.expOpen = false; renderExp(); } }));
   disposers.push(onOutsideClick([exportBtn, exportMenu], () => { if (st.exportOpen) { st.exportOpen = false; renderExport(); } }));
+  const onDelete = (e) => {
+    if ((e.key !== 'Delete' && e.key !== 'Backspace') || e.target.closest?.('input,textarea,select,[contenteditable]')) return;
+    if (!graph.selectedIds().length) return;
+    e.preventDefault();
+    deleteSelected();
+  };
+  document.addEventListener('keydown', onDelete);
+  disposers.push(() => document.removeEventListener('keydown', onDelete));
   const onKey = (e) => { if (e.key === 'Escape') { st.expOpen = st.exportOpen = false; renderExp(); renderExport(); customize.close(); } };
   document.addEventListener('keydown', onKey);
-  renderTags(); renderExp(); renderExport(); renderStatus();
+  renderTags(); renderExp(); renderExport(); renderStatus(); renderCluster();
   api.experiments().then((x) => { st.experiments = x; renderExp(); }).catch((e) => { st.error = e.message; renderStatus(); });
   load();
 
   return {
     el,
     destroy() {
-      clearTimeout(debounce); st.seq++;
+      clearTimeout(debounce); clearTimeout(toastTimer); st.seq++;
       disposers.forEach((d) => d());
       document.removeEventListener('keydown', onKey);
       stats.destroy(); graph.destroy(); el.remove();

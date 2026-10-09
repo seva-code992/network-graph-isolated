@@ -3,8 +3,15 @@ services:
     build: .
     ports:
       - "8000:8000"
+    # A Neo4j running on this machine is reached as host.docker.internal (Docker Desktop runs containers
+    # in a VM, so "localhost" / host networking would not point at the machine).
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     environment:
-      EXPERIMENT_SOURCE: mock       # "neo4j" is reserved for when the experiment schema is wired up
+      EXPERIMENT_SOURCE: ${EXPERIMENT_SOURCE:-mock}   # "neo4j": real experiments
+      NEO4J_URI: ${NEO4J_URI:-bolt://host.docker.internal:7687}
+      NEO4J_USER: ${NEO4J_USER:-neo4j}
+      NEO4J_PASSWORD: ${NEO4J_PASSWORD:-guest123}
       SEED_DEMO_LISTS: "1"          # demo lists sampled from the embeddings; set 0 once real lists come from the API
       MAX_EDGES: "100000"           # safety cap: every possible edge is returned, so huge selections are refused
     volumes:
@@ -14,7 +21,8 @@ services:
     networks:
       - plantgenie_network
 
-  # Not used yet (experiments are mocked) – start with: docker compose --profile neo4j up
+  # Only for when no Neo4j runs on the host (then set NEO4J_URI=bolt://neo4j:7687):
+  # docker compose --profile neo4j up
   neo4j:
     profiles: ["neo4j"]
     image: neo4j:2026.01.4-community-trixie

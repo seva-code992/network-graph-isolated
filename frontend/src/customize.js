@@ -1,4 +1,4 @@
-import { h, clear, onOutsideClick } from './dom.js';
+import { h, clear, onOutsideClick, makeDraggable } from './dom.js';
 import { PALETTES } from './palettes.js';
 import { createColorPicker } from './colorPicker.js';
 import * as G from './groups.js';
@@ -22,6 +22,7 @@ export function createCustomize({ getModes, getItems, isBlocked = () => false, o
   const root = h('div', { class: 'customize', hidden: true, role: 'dialog', 'aria-label': title });
   let dispose = () => {};
   let footEl = null;
+  makeDraggable(root, () => root, { handle: '.customize-head, .customize-hint' });   // move the box by its title row
 
   const mode = () => {
     const modes = getModes();

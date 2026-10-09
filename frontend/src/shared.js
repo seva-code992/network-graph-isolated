@@ -1,4 +1,4 @@
-import { h, clear } from './dom.js';
+import { h, clear, makeDraggable } from './dom.js';
 import { createCustomize } from './customize.js';
 import { buildColorModes } from './colorModes.js';
 import { freeColor } from './palettes.js';
@@ -55,7 +55,9 @@ export function createSharedDialog({ colors, lists, sharedGenes, onContinue, onB
       h('span', { class: 'shared-hint' }, 'Please choose an option to decide the color of the shared genes to generate the graph.'),
       h('button', { class: 'btn-small', onclick: onContinue }, 'Continue')));
 
-  root.append(h('div', { class: 'shared-stack' }, card, customize.el));
+  const stack = h('div', { class: 'shared-stack' }, card, customize.el);
+  const drag = makeDraggable(root, () => stack, { skip: '.customize,.shared-rows,.options-box' });
+  root.append(stack);
   if (colors.shared.mode === 'custom') customize.open();
-  return { el: root, destroy: () => root.remove() };
+  return { el: root, destroy: () => { drag.destroy(); root.remove(); } };
 }

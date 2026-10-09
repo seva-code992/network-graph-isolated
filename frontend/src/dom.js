@@ -48,6 +48,64 @@ export function svgIcon(pathD, { size = 14, stroke = '#0FA120', width = 2 } = {}
   return svg;
 }
 
+/** A horizontal line sample for legends. SVG, not a CSS border: borders snap to whole device
+ *  pixels, which makes 0.1px and 0.5px lines look identical; SVG strokes keep fractional widths
+ *  (and are anti-aliased, like the edges drawn in the graph). */
+export function lineSample(color, width, length = 27) {
+  const svg = document.createElementNS(SVG_NS, 'svg');
+  svg.setAttribute('width', length);
+  svg.setAttribute('height', 4);
+  svg.setAttribute('aria-hidden', 'true');
+  svg.classList.add('sample');
+  const l = document.createElementNS(SVG_NS, 'line');
+  for (const [k, v] of Object.entries({ x1: 0, x2: length, y1: 2, y2: 2, stroke: color, 'stroke-width': width })) l.setAttribute(k, v);
+  svg.append(l);
+  return svg;
+}
+
+/** Keep a moved box reachable: at least `keep` px of it stay inside the window. rect = the box without any offset. */
+export function clampOffset(x, y, rect, win, keep = 48) {
+  const cx = Math.min(Math.max(x, keep - (rect.left + rect.width)), win.width - keep - rect.left);
+  const cy = Math.min(Math.max(y, -rect.top), win.height - keep - rect.top);
+  return [cx, cy];
+}
+
+const NO_DRAG = 'input,textarea,select,button,a,label,[draggable="true"],[role="checkbox"],[contenteditable]';
+
+/**
+ * Let a pop-up be moved by dragging it. `container` is an element that stays in the page (it receives the
+ * pointer events); `getBox()` returns the box to move right now (it may be re-created on every render, call
+ * `apply()` after rendering to put it back where the user left it). Dragging starts on any spot that is not a
+ * control (`skip` adds more selectors to leave alone); with `handle`, only on elements matching it.
+ */
+export function makeDraggable(container, getBox, { skip = '', handle = null } = {}) {
+  let x = 0, y = 0, drag = null;
+  const apply = () => { const b = getBox(); if (b) b.style.translate = x || y ? `${x}px ${y}px` : ''; };
+  container.addEventListener('pointerdown', (e) => {
+    const box = getBox();
+    if (!box || e.button !== 0 || !box.contains(e.target) || e.target.closest([NO_DRAG, skip].filter(Boolean).join(','))) return;
+    if (handle && !(e.target === box || e.target.closest(handle))) return;
+    const r = box.getBoundingClientRect();
+    drag = { px: e.clientX - x, py: e.clientY - y, rect: { left: r.left - x, top: r.top - y, width: r.width, height: r.height } };
+    document.body.style.userSelect = 'none';
+    e.preventDefault();
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', end, { once: true });
+    window.addEventListener('pointercancel', end, { once: true });
+  });
+  function move(e) {
+    if (!drag) return;
+    [x, y] = clampOffset(e.clientX - drag.px, e.clientY - drag.py, drag.rect, { width: innerWidth, height: innerHeight });
+    apply();
+  }
+  function end() {
+    drag = null;
+    document.body.style.userSelect = '';
+    window.removeEventListener('pointermove', move);
+  }
+  return { apply, reset() { x = y = 0; apply(); }, destroy: end };
+}
+
 /** Run `fn` on the next pointerdown outside `els`; returns a disposer. */
 export function onOutsideClick(els, fn) {
   const list = [els].flat();

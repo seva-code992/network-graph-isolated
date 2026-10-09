@@ -21,7 +21,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or Settings.from_env()
     store = EmbeddingStore(settings.embeddings_dir)
     lists = FileListsProvider(settings.data_dir / "lists.json", store, settings.seed_demo_lists)
-    experiments = make_source(settings.experiment_source)
+    experiments = make_source(settings.experiment_source, settings)
     app = FastAPI(title="Network graph API")
     app.state.store = store
     app.add_middleware(GZipMiddleware, minimum_size=1000)   # graphs with every edge are large JSON
